@@ -23,6 +23,7 @@ type BqDatabaseQuery struct {
 	offset       int
 	orderBy      []string
 	selectFields []string
+	tablePrefix  string
 }
 
 // Apply adds a callback to apply on each result entity in the query
@@ -112,8 +113,25 @@ func (q *BqDatabaseQuery) Find(keys ...string) ([]Entity, int64, error) {
 
 	// Process rows and convert to Entity objects
 	var entities []Entity
+	/*
+		for {
+			var row map[string]bigquery.Value
+			err := it.Next(&row)
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				return nil, 0, err
+			}
+
+			entity := q.factory()
+			mapRowToEntity(row, entity) // Assume this function maps row data to Entity
+			entities = append(entities, entity)
+		}
+	*/
 	for {
 		var row map[string]bigquery.Value
+		entity := q.factory()
 		err := it.Next(&row)
 		if errors.Is(err, iterator.Done) {
 			break
@@ -122,8 +140,8 @@ func (q *BqDatabaseQuery) Find(keys ...string) ([]Entity, int64, error) {
 			return nil, 0, err
 		}
 
-		entity := q.factory()
-		mapRowToEntity(row, entity) // Assume this function maps row data to Entity
+		//entity := q.factory()
+		//mapRowToEntity(row, entity) // Assume this function maps row data to Entity
 		entities = append(entities, entity)
 	}
 

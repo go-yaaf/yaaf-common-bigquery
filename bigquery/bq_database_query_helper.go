@@ -2,9 +2,10 @@ package bigquerydb
 
 import (
 	"fmt"
-	"github.com/go-yaaf/yaaf-common/database"
 	"strings"
 	"time"
+
+	"github.com/go-yaaf/yaaf-common/database"
 )
 
 // Build the SQL query string based on filters, sorting, and pagination
@@ -13,7 +14,8 @@ func (q *BqDatabaseQuery) buildSQL() string {
 	if len(q.selectFields) > 0 {
 		selectClause = strings.Join(q.selectFields, ", ")
 	}
-	query := fmt.Sprintf("SELECT %s FROM `your_project.dataset.table`", selectClause)
+
+	query := fmt.Sprintf("SELECT %s FROM `%s.%s`", selectClause, q.tablePrefix, q.factory().TABLE())
 
 	// Add WHERE filters
 	if len(q.allFilters) > 0 {

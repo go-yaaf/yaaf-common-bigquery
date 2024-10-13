@@ -13,18 +13,19 @@ import (
 
 // BqDatabase struct implementing IDatabase for BigQuery
 type BqDatabase struct {
-	client  *bigquery.Client
+	client *bigquery.Client
+	projectId,
 	dataSet string
 }
 
 // NewBqDatabase creates a new BigQuery database connection with a project ID and dataset name
-func NewBqDatabase(projectID, dataSet string) (database.IDatabase, error) {
+func NewBqDatabase(projectId, dataSet string) (database.IDatabase, error) {
 	ctx := context.Background()
-	client, err := bigquery.NewClient(ctx, projectID)
+	client, err := bigquery.NewClient(ctx, projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %v", err)
 	}
-	return &BqDatabase{client: client, dataSet: dataSet}, nil
+	return &BqDatabase{client: client, dataSet: dataSet, projectId: projectId}, nil
 }
 
 // Close Closer includes method Close()
@@ -114,9 +115,10 @@ func (db *BqDatabase) BulkSetFields(factory EntityFactory, field string, values 
 // Query returns an instance of BqDatabaseQuery to build and execute a query
 func (db *BqDatabase) Query(factory EntityFactory) database.IQuery {
 	return &BqDatabaseQuery{
-		client:  db.client,
-		dataSet: db.dataSet, // Include the dataset for query composition
-		factory: factory,
+		client:      db.client,
+		dataSet:     db.dataSet, // Include the dataset for query composition
+		factory:     factory,
+		tablePrefix: fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
 	}
 }
 

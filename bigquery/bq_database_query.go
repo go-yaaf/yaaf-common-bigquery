@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +14,25 @@ import (
 	. "github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
 )
+
+type FlowRecord struct {
+	BaseEntity
+	FlowId        int64  `json:"flow_id"`
+	StreamId      string `json:"stream_id"`
+	DeviceId      string `json:"device_id"`
+	StartTime     int64  `json:"start_time"`
+	EndTime       int64  `json:"end_time"`
+	SrcIP         string `json:"src_ip"`
+	SrcPort       int    `json:"src_port"`
+	DstIP         string `json:"dst_ip"`
+	DstPort       int    `json:"dst_port"`
+	PcktToSrv     int    `json:"pckt_to_srv"`
+	PcktToClient  int    `json:"pckt_to_client"`
+	BytesToSrv    int    `json:"bytes_to_srv"`
+	BytesToClient int    `json:"bytes_to_client"`
+	Proto         string `json:"proto"`
+	Pcap          string `json:"pcap"`
+}
 
 // BqDatabaseQuery struct for building and executing queries on BigQuery
 type BqDatabaseQuery struct {
@@ -113,25 +134,9 @@ func (q *BqDatabaseQuery) Find(keys ...string) ([]Entity, int64, error) {
 
 	// Process rows and convert to Entity objects
 	var entities []Entity
-	/*
-		for {
-			var row map[string]bigquery.Value
-			err := it.Next(&row)
-			if errors.Is(err, iterator.Done) {
-				break
-			}
-			if err != nil {
-				return nil, 0, err
-			}
 
-			entity := q.factory()
-			mapRowToEntity(row, entity) // Assume this function maps row data to Entity
-			entities = append(entities, entity)
-		}
-	*/
 	for {
 		var row map[string]bigquery.Value
-		entity := q.factory()
 		err := it.Next(&row)
 		if errors.Is(err, iterator.Done) {
 			break
@@ -140,8 +145,8 @@ func (q *BqDatabaseQuery) Find(keys ...string) ([]Entity, int64, error) {
 			return nil, 0, err
 		}
 
-		//entity := q.factory()
-		//mapRowToEntity(row, entity) // Assume this function maps row data to Entity
+		entity := q.factory()
+		mapToStruct(row, entity) // Assume this function maps row data to Entity
 		entities = append(entities, entity)
 	}
 
@@ -523,15 +528,57 @@ func (q *BqDatabaseQuery) SetFields(fields map[string]any, keys ...string) (int6
 	return 0, fmt.Errorf("SetFields operation is not supported in BigQuery")
 }
 
-// Utility function for mapping BigQuery row results to Entity
-func mapRowToEntity(row map[string]bigquery.Value, entity Entity) {
+// Generic function to map a map[string]interface{} to any struct using reflection
+func mapToStruct(m map[string]bigquery.Value, output interface{}) error {
+	val := reflect.ValueOf(output).Elem() // Get the value the pointer points to
+	typ := reflect.TypeOf(output).Elem()  // Get the type of the struct
 
-	// Assuming the Entity is JSON-compatible
-	//TODO check how to implement
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		structField := typ.Field(i)
 
-	/*
-		for key, value := range row {
-			entity.Set(key, value)
+		// Get the JSON tag from the struct field
+		jsonTag := structField.Tag.Get("json")
+		if jsonTag == "" {
+			continue
 		}
-	*/
+
+		// Get the value from the map using the JSON tag
+		mapValue, exists := m[jsonTag]
+		if !exists {
+			continue // Skip if no corresponding value in the map
+		}
+
+		// Set the value based on the field type
+		if field.CanSet() {
+			switch field.Kind() {
+			case reflect.Int, reflect.Int64:
+				// Handle int and int64 types
+				if v, ok := mapValue.(int64); ok {
+					field.SetInt(v)
+				} else if v, ok := mapValue.(int); ok {
+					field.SetInt(int64(v))
+				} else if v, ok := mapValue.(string); ok {
+					if iv, err := strconv.ParseInt(v, 10, 64); err == nil {
+						field.SetInt(iv)
+					}
+				}
+			case reflect.String:
+				// Handle string types
+				if v, ok := mapValue.(string); ok {
+					field.SetString(v)
+				}
+			// Handle other cases such as floats, booleans, etc., if needed
+			case reflect.Float64:
+				if v, ok := mapValue.(float64); ok {
+					field.SetFloat(v)
+				}
+			case reflect.Bool:
+				if v, ok := mapValue.(bool); ok {
+					field.SetBool(v)
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -7,7 +7,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/go-yaaf/yaaf-common/database"
-	. "github.com/go-yaaf/yaaf-common/entity"
+	"github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
 )
 
@@ -46,79 +46,79 @@ func (db *BqDatabase) CloneDatabase() (database.IDatabase, error) {
 // CRUD Operations (No-op implementations) --------------------------------------
 
 // Get fetches a single entity by ID (not supported in BigQuery)
-func (db *BqDatabase) Get(factory EntityFactory, entityID string, keys ...string) (Entity, error) {
+func (db *BqDatabase) Get(factory entity.EntityFactory, entityID string, keys ...string) (entity.Entity, error) {
 	return nil, fmt.Errorf("get operation is not supported in BigQuery")
 }
 
 // List fetches multiple entities by IDs (not supported in BigQuery)
-func (db *BqDatabase) List(factory EntityFactory, entityIDs []string, keys ...string) ([]Entity, error) {
+func (db *BqDatabase) List(factory entity.EntityFactory, entityIDs []string, keys ...string) ([]entity.Entity, error) {
 	return nil, fmt.Errorf("list operation is not supported in BigQuery")
 }
 
 // Exists checks if an entity exists by ID (not supported in BigQuery)
-func (db *BqDatabase) Exists(factory EntityFactory, entityID string, keys ...string) (bool, error) {
+func (db *BqDatabase) Exists(factory entity.EntityFactory, entityID string, keys ...string) (bool, error) {
 	return false, fmt.Errorf("exists operation is not supported in BigQuery")
 }
 
 // Insert inserts a new entity (not supported in BigQuery)
-func (db *BqDatabase) Insert(entity Entity) (Entity, error) {
+func (db *BqDatabase) Insert(entity entity.Entity) (entity.Entity, error) {
 	return nil, fmt.Errorf("insert operation is not supported in BigQuery")
 }
 
 // Update updates an existing entity (not supported in BigQuery)
-func (db *BqDatabase) Update(entity Entity) (Entity, error) {
+func (db *BqDatabase) Update(entity entity.Entity) (entity.Entity, error) {
 	return nil, fmt.Errorf("update operation is not supported in BigQuery")
 }
 
 // Upsert inserts or updates an entity (not supported in BigQuery)
-func (db *BqDatabase) Upsert(entity Entity) (Entity, error) {
+func (db *BqDatabase) Upsert(entity entity.Entity) (entity.Entity, error) {
 	return nil, fmt.Errorf("upsert operation is not supported in BigQuery")
 }
 
 // Delete deletes an entity by ID (not supported in BigQuery)
-func (db *BqDatabase) Delete(factory EntityFactory, entityID string, keys ...string) error {
+func (db *BqDatabase) Delete(factory entity.EntityFactory, entityID string, keys ...string) error {
 	return fmt.Errorf("delete operation is not supported in BigQuery")
 }
 
 // Bulk Operations (No-op implementations) -------------------------------------
 
-func (db *BqDatabase) BulkInsert(entities []Entity) (int64, error) {
+func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 	return 0, fmt.Errorf("BulkInsert operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) BulkUpdate(entities []Entity) (int64, error) {
+func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {
 	return 0, fmt.Errorf("BulkUpdate operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) BulkUpsert(entities []Entity) (int64, error) {
+func (db *BqDatabase) BulkUpsert(entities []entity.Entity) (int64, error) {
 	return 0, fmt.Errorf("BulkUpsert operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) BulkDelete(factory EntityFactory, entityIDs []string, keys ...string) (int64, error) {
+func (db *BqDatabase) BulkDelete(factory entity.EntityFactory, entityIDs []string, keys ...string) (int64, error) {
 	return 0, fmt.Errorf("BulkDelete operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) SetField(factory EntityFactory, entityID string, field string, value any, keys ...string) error {
+func (db *BqDatabase) SetField(factory entity.EntityFactory, entityID string, field string, value any, keys ...string) error {
 	return fmt.Errorf("SetField operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) SetFields(factory EntityFactory, entityID string, fields map[string]any, keys ...string) error {
+func (db *BqDatabase) SetFields(factory entity.EntityFactory, entityID string, fields map[string]any, keys ...string) error {
 	return fmt.Errorf("SetFields operation is not supported in BigQuery")
 }
 
-func (db *BqDatabase) BulkSetFields(factory EntityFactory, field string, values map[string]any, keys ...string) (int64, error) {
+func (db *BqDatabase) BulkSetFields(factory entity.EntityFactory, field string, values map[string]any, keys ...string) (int64, error) {
 	return 0, fmt.Errorf("BulkSetFields operation is not supported in BigQuery")
 }
 
 // Query Operations ------------------------------------------------------------
 
 // Query returns an instance of BqDatabaseQuery to build and execute a query
-func (db *BqDatabase) Query(factory EntityFactory) database.IQuery {
-	return &BqDatabaseQuery{
-		client:      db.client,
-		dataSet:     db.dataSet, // Include the dataset for query composition
-		factory:     factory,
-		tablePrefix: fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
+func (db *BqDatabase) Query(factory entity.EntityFactory) database.IQuery {
+	return &bqDatabaseQuery{
+		client:         db.client,
+		factory:        factory,
+		tablePrefix:    fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
+		fieldTagToType: buildFieldsTypesMap(factory()),
 	}
 }
 
@@ -135,7 +135,7 @@ func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
 }
 
 // ExecuteQuery executes a native SQL query and returns the result as JSON
-func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) ([]Json, error) {
+func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []entity.Json, err error) {
 	ctx := context.Background()
 	query := db.client.Query(sql)
 
@@ -153,7 +153,6 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) ([]Json, err
 		return nil, fmt.Errorf("failed to execute query: %v", err)
 	}
 
-	var results []Json
 	for {
 		var row map[string]bigquery.Value
 		err := it.Next(&row)
@@ -167,10 +166,10 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) ([]Json, err
 		//TODO check how to implement
 
 		// Convert BigQuery row to JSON format
-		//results = append(results, Json(row))
+		//results = append(results, entity.Json(row))
 	}
 
-	return results, nil
+	return
 }
 
 // DropTable is a no-op for BigQuery

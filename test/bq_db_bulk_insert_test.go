@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	bigquerydb "github.com/go-yaaf/yaff-common-bigquery/bigquery"
+	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bigquery"
 )
 
 func TestBQBulkInsert(t *testing.T) {

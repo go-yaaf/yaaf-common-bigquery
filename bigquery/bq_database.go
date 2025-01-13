@@ -1,4 +1,4 @@
-package bigquerydb
+package bqdb
 
 import (
 	"context"

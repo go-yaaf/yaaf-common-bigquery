@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bigquery"
 	. "github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"github.com/go-yaaf/yaaf-common/logger"
-	bigquerydb "github.com/go-yaaf/yaff-common-bigquery/bigquery"
 )
 
 // TestEq tests a BigQuery query with an equality (Eq) filter and retrieves the results.

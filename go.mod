@@ -1,4 +1,4 @@
-module github.com/go-yaaf/yaff-common-bigquery
+module github.com/go-yaaf/yaaf-common-bigquery
 
 go 1.22
 

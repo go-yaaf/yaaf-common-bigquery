@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/go-yaaf/yaaf-common/config"
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
@@ -18,13 +21,50 @@ type BqDatabase struct {
 	dataSet string
 }
 
-// NewBqDatabase creates a new BigQuery database connection with a project ID and dataset name
-func NewBqDatabase(projectId, dataSet string) (database.IDatabase, error) {
+// NewBqDatabase creates a new BigQuery database connection using a URI.
+//
+// The URI must follow the format: "bq://projectId:datasetName"
+//   - The schema must be "bq".
+//   - If the schema is invalid, it returns an error.
+//   - If the URI is valid, it parses the project ID and dataset name, creates a BigQuery client,
+//     and initializes a BqDatabase struct.
+//
+// Parameters:
+// - uri: A string representing the BigQuery connection URI.
+//
+// Returns:
+// - A new instance of the BqDatabase struct implementing the database.IDatabase interface.
+// - An error if the URI format is invalid or the BigQuery client creation fails.
+func NewBqDatabase(uri string) (database.IDatabase, error) {
+	// Validate URI schema
+	const schemaPrefix = "bq://"
+	if !strings.HasPrefix(uri, schemaPrefix) {
+		return nil, errors.New("invalid URI: schema must be 'bq'")
+	}
+
+	// Extract project ID and dataset name
+	trimmedURI := strings.TrimPrefix(uri, schemaPrefix)
+	parts := strings.Split(trimmedURI, ":")
+	if len(parts) != 2 {
+		return nil, errors.New("invalid URI format: must be 'bq://projectId:datasetName'")
+	}
+
+	projectId := parts[0]
+	dataSet := parts[1]
+
+	// Validate extracted values
+	if projectId == "" || dataSet == "" {
+		return nil, errors.New("invalid URI: projectId or datasetName is empty")
+	}
+
+	// Create BigQuery client
 	ctx := context.Background()
 	client, err := bigquery.NewClient(ctx, projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %v", err)
 	}
+
+	// Return BqDatabase instance
 	return &BqDatabase{client: client, dataSet: dataSet, projectId: projectId}, nil
 }
 
@@ -83,7 +123,47 @@ func (db *BqDatabase) Delete(factory entity.EntityFactory, entityID string, keys
 // Bulk Operations (No-op implementations) -------------------------------------
 
 func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
-	return 0, fmt.Errorf("BulkInsert operation is not supported in BigQuery")
+
+	if len(entities) == 0 {
+		return 0, nil
+	}
+
+	batchSize := config.Get().BigQueryBatchSize()
+	timeout := time.Duration(config.Get().CfgBigQueryBatchTimeouSec()) * time.Second // Set timeout duration for BQ bulk insert operation
+	totalInserted := 0
+
+	for start := 0; start < len(entities); start += batchSize {
+		end := start + batchSize
+		if end > len(entities) {
+			end = len(entities)
+		}
+		batch := entities[start:end]
+
+		// Create a context with timeout for each batch
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		if _, err := db.bulkInsertInternal(ctx, batch); err != nil {
+			return int64(totalInserted), err
+		}
+		totalInserted += len(batch)
+	}
+
+	return int64(totalInserted), nil
+}
+
+func (db *BqDatabase) bulkInsertInternal(ctx context.Context, entities []entity.Entity) (int, error) {
+	if len(entities) == 0 {
+		return 0, nil
+	}
+
+	inserter := db.client.Dataset(db.dataSet).Table(entities[0].TABLE()).Inserter()
+	// Insert the records
+	if err := inserter.Put(ctx, entities); err != nil {
+		return 0, err
+	}
+
+	return len(entities), nil
 }
 
 func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {

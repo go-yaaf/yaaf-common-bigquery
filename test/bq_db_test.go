@@ -30,7 +30,7 @@ import (
 func TestEq(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -73,7 +73,7 @@ func TestEq(t *testing.T) {
 func TestLike(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -135,7 +135,7 @@ func TestLike(t *testing.T) {
 func TestLikeAndNotInForString(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -200,7 +200,7 @@ func TestLikeAndNotInForString(t *testing.T) {
 func TestLikeAndRangAndNotInForString(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -267,7 +267,7 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -332,7 +332,7 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 func TestLikeAndRangeAndGt(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -397,7 +397,7 @@ func TestLikeAndRangeAndGt(t *testing.T) {
 func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -471,7 +471,7 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 // - If the sorting of the `bytes_to_srv` field is incorrect (i.e., the first record has a higher `bytes_to_srv` value than the last), the test fails.
 func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -543,7 +543,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 // - The total sum of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -591,7 +591,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 // - The maximum value of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -638,7 +638,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 // - The average value of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -685,7 +685,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 // - The total count of records that match the specified filters.
 func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -734,7 +734,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 // - A total count of all records that match the filters and grouping.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -775,7 +775,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
 // - A total count of all records that were processed by the query.
 func TestGroupCountOnly(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -815,7 +815,7 @@ func TestGroupCountOnly(t *testing.T) {
 // This test ensures that the query runs successfully and provides expected results for the sum aggregation.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -858,7 +858,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T)
 // This test ensures that the query runs successfully and provides expected results for aggregation.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
@@ -900,7 +900,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.
 // This test ensures that the query runs successfully and provides the expected hourly histogram of data.
 func TestHistogram(t *testing.T) {
 
-	bqdb, err := bigquerydb.NewBqDatabase("shieldiot-staging", "pulseiot")
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)

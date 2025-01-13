@@ -4,7 +4,8 @@ go 1.22
 
 require (
 	cloud.google.com/go/bigquery v1.63.1
-	github.com/go-yaaf/yaaf-common v1.2.118
+	github.com/go-yaaf/yaaf-common v1.2.128
+	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	google.golang.org/api v0.200.0
 )
 
@@ -40,7 +41,6 @@ require (
 	go.uber.org/multierr v1.10.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.28.0 // indirect
-	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/mod v0.20.0 // indirect
 	golang.org/x/net v0.30.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect

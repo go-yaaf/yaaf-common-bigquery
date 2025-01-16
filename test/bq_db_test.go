@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bigquery"
+	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
 	. "github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"github.com/go-yaaf/yaaf-common/logger"
@@ -493,7 +493,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 	entities, count, err := bqdb.Query(NewFlowRecordEntity).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
 		Sort("bytes_to_srv").
 		Limit(1000).
@@ -549,16 +549,17 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	count, err := bqdb.Query(NewFlowRecordEntity).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
-		Aggregation("bytes_to_srv", "sum")
+	touples, count, err := bqdb.Query(NewFlowRecordEntity).
+		Filter(F("stream_id").Eq("juuice-1-01")).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Filter(F("start_time").Gte(1736873880000)).
+		Filter(F("end_time").Lte(1736873999000)).
+		GroupAggregation("bytes_to_srv", "sum", "minute")
 
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	logger.Debug("touples: %v", touples)
 	logger.Debug("count: %f", count)
 }
 

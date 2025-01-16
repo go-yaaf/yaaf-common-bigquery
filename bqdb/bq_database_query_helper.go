@@ -265,7 +265,7 @@ func buildFieldsTypesMap(entity entity.Entity) map[string]reflect.Kind {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		// Get the JSON tag
-		jsonTag := field.Tag.Get("json")
+		jsonTag := field.Tag.Get("bigquery")
 		if jsonTag != "" {
 			// Store the JSON tag and the field type in the map
 			fieldMap[jsonTag] = field.Type.Kind()

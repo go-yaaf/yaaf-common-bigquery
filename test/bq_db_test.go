@@ -919,13 +919,3 @@ func TestHistogram(t *testing.T) {
 	}
 	logger.Debug("count: %f\n %v", count, result)
 }
-
-type NewtworkActivityOverTime struct {
-	entity.BaseEntity
-	TimePoint    int64 `json:"timestamp" bq:"start_time"`
-	NumOfDevices int64 `json:"value"     bq:"device_id"`
-}
-
-func TestNetworkActivityOverTime(t *testing.T) {
-
-}

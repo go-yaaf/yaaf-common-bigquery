@@ -190,31 +190,40 @@ func (db *BqDatabase) BulkSetFields(factory entity.EntityFactory, field string, 
 	return 0, fmt.Errorf("BulkSetFields operation is not supported in BigQuery")
 }
 
+// DropTable Drop table and indexes
+func (db *BqDatabase) DropTable(table string) (err error) {
+	return nil
+}
+
 // Query Operations ------------------------------------------------------------
 
 // Query returns an instance of BqDatabaseQuery to build and execute a query
 func (db *BqDatabase) Query(factory entity.EntityFactory) database.IQuery {
 	return &bqDatabaseQuery{
-		client:         db.client,
-		factory:        factory,
-		tablePrefix:    fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
-		fieldTagToType: buildFieldsTypesMap(factory()),
+		client:        db.client,
+		factory:       factory,
+		tablePrefix:   fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
+		jsonTagToType: buildFieldsTypesMap(factory()),
 	}
 }
 
-func (db *BqDatabase) QueryAdvanced(factory entity.EntityFactory) database.IAdvancedQuery {
+func (db *BqDatabase) AdvancedQuery(factory entity.EntityFactory) database.IAdvancedQuery {
 
 	bq := &bqDatabaseQuery{
-		client:         db.client,
-		factory:        factory,
-		tablePrefix:    fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
-		fieldTagToType: buildFieldsTypesMap(factory()),
-		bqFieldInfo:    buildAnalyticFieldsdMap(factory()),
+		client:        db.client,
+		factory:       factory,
+		tablePrefix:   fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
+		jsonTagToType: buildFieldsTypesMap(factory()),
+		bqFieldInfo:   buildAnalyticFieldsdMap(factory()),
 	}
 	return bq
 }
 
 // DDL Operations (No-op) ------------------------------------------------------
+// PurgeTable is a no-op for BigQuery
+func (db *BqDatabase) PurgeTable(table string) error {
+	return fmt.Errorf("PurgeTable is not supported in BigQuery")
+}
 
 // ExecuteDDL is a no-op for BigQuery
 func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
@@ -262,14 +271,4 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 	}
 
 	return
-}
-
-// DropTable is a no-op for BigQuery
-func (db *BqDatabase) DropTable(table string) error {
-	return fmt.Errorf("DropTable is not supported in BigQuery")
-}
-
-// PurgeTable is a no-op for BigQuery
-func (db *BqDatabase) PurgeTable(table string) error {
-	return fmt.Errorf("PurgeTable is not supported in BigQuery")
 }

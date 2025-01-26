@@ -55,7 +55,7 @@ func TestDeviceTimeLine(t *testing.T) {
 		return dt
 	}
 
-	qa := bqdb.QueryAdvanced(factory)
+	qa := bqdb.AdvancedQuery(factory)
 	qa.Filter(F("protocol").In([]string{"TCP", "UDP"})).
 		Sort("timestamp-").
 		Apply(cb)

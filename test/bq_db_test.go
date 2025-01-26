@@ -36,8 +36,8 @@ func TestEq(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	flowRrecords, _, err := bqdb.Query(fr.EntityFactory()).
+
+	flowRrecords, _, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("dst_ip").Eq("8.8.8.8")).
 		Limit(100).
 		Page(0).
@@ -90,8 +90,8 @@ func TestLike(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Limit(1000).
@@ -155,8 +155,8 @@ func TestLikeAndNotInForString(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("dst_ip").NotIn("1.1.1.1", "8.8.8.8", "8.8.4.4")).
@@ -220,8 +220,8 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("dst_ip").NotIn("1.1.1.1", "8.8.8.8", "8.8.4.4")).
@@ -286,8 +286,8 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("dst_port").NotIn([]int{0, 443, 80})).
@@ -351,8 +351,8 @@ func TestLikeAndRangeAndGt(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").NotIn([]string{"ICMP", "UDP"})).
@@ -416,8 +416,8 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 		}
 		return nil
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	_, count, err := bqdb.Query(fr.EntityFactory()).
+
+	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
@@ -490,8 +490,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 		}
 		return entity
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	entities, count, err := bqdb.Query(fr.EntityFactory()).
+
+	entities, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("protocol").In([]string{"TCP", "UDP"})).
@@ -549,8 +549,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	touples, count, err := bqdb.Query(fr.EntityFactory()).
+
+	touples, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("stream_id").Eq("juuice-1-01")).
 		Filter(F("protocol").In([]string{"TCP", "UDP"})).
 		Filter(F("start_time").Gte(1736873880000)).
@@ -598,8 +598,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	max, err := bqdb.Query(fr.EntityFactory()).
+
+	max, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -645,8 +645,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	avg, err := bqdb.Query(fr.EntityFactory()).
+
+	avg, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -692,8 +692,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	count, err := bqdb.Query(fr.EntityFactory()).
+
+	count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -741,8 +741,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	result, count, err := bqdb.Query(fr.EntityFactory()).
+
+	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -782,8 +782,8 @@ func TestGroupCountOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	result, count, err := bqdb.Query(fr.EntityFactory()).
+
+	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		GroupCount("src_ip")
 
 	if err != nil {
@@ -822,8 +822,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	result, count, err := bqdb.Query(fr.EntityFactory()).
+	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -865,8 +864,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	result, count, err := bqdb.Query(fr.EntityFactory()).
+
+	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).
@@ -907,8 +906,8 @@ func TestHistogram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-	fr := NewFlowRecordEntity(streamId).(*FlowRecord)
-	result, count, err := bqdb.Query(fr.EntityFactory()).
+
+	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Filter(F("src_ip").Like("10.164.41.%")).
 		Filter(F("proto").In([]string{"TCP", "UDP"})).
 		Range("start_time", 1722540000000, 1722715200000).

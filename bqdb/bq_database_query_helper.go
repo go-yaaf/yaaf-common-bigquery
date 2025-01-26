@@ -50,19 +50,22 @@ func (s *bqDatabaseQuery) buildStatementAnalytic() (query string) {
 	order := s.buildOrder()
 	limit := s.buildLimit()
 
-	//prepare groupBy part
-	groupBy := make([]string, 0, len(s.groupBys))
-
 	// build SELECT part
 	selectPart := strings.Join(s.aggFuncs, ",")
+	selectPart += strings.Join(s.buildCountPart(), ",")
 
+	//prepare groupBy part
+	groupBy := make([]string, 0, len(s.groupBys))
 	//go over group by part
 	for _, gb := range s.groupBys {
-		fn := getBQTimePeriodSQLOrOriginalFieldName(gb.fieldName, gb.timePeriod)
-		selectPart = strings.Join([]string{selectPart, fmt.Sprintf("%s AS %s ", fn, gb.fieldAlias)}, ",")
-		groupBy = append(groupBy, gb.fieldAlias)
+		fn := getBQTimePeriodSQLOrOriginalFieldName(gb.bqTag, gb.timePeriod)
+		selectPart = strings.Join([]string{selectPart, fmt.Sprintf("%s AS %s ", fn, gb.dbColumnAlias)}, ",")
+		groupBy = append(groupBy, gb.dbColumnAlias)
 	}
-
+	//correct for initially empty selectPart
+	if selectPart[0] == ',' {
+		selectPart = selectPart[1:]
+	}
 	if len(groupBy) == 0 {
 		query = fmt.Sprintf("SELECT %s FROM `%s` %s %s %s ", selectPart, tblName, where, order, limit)
 	} else {
@@ -189,7 +192,7 @@ func (s *bqDatabaseQuery) buildFilter(qf database.QueryFilter) (sqlPart string) 
 	operator := qf.GetOperator()
 
 	// Get the type of the field from the map
-	fieldType, exists := s.fieldTagToType[fieldName]
+	fieldType, exists := s.bqFieldInfo[fieldName]
 	if !exists {
 		// Handle the case where the field is not found in the map
 		return fmt.Sprintf("Unknown field: %s", fieldName)
@@ -197,7 +200,7 @@ func (s *bqDatabaseQuery) buildFilter(qf database.QueryFilter) (sqlPart string) 
 
 	// Helper function to handle formatting based on the field type
 	formatValue := func(value interface{}) string {
-		if fieldType == reflect.String {
+		if fieldType.goType == reflect.String {
 			return fmt.Sprintf("'%v'", value) // Use quotes for strings
 		} else {
 			return fmt.Sprintf("%v", value) // No quotes for numeric types
@@ -248,6 +251,32 @@ func (s *bqDatabaseQuery) buildListForFilter(qf database.QueryFilter) string {
 		}
 	}
 	return items
+}
+
+// build COUNT's part of the SELECT
+func (s *bqDatabaseQuery) buildCountPart() []string {
+	var parts []string
+	for _, entry := range s.counts {
+
+		if entry.isUnique {
+			// Add COUNT(DISTINCT fieldName) to the parts
+			if fi, exists := s.bqFieldInfo[entry.bqTag]; exists {
+				parts = append(parts, fmt.Sprintf("COUNT(DISTINCT %s) AS %s", entry.bqTag, s.resolveDbColumnAlias(fi, entry.bqTag+"_count")))
+			}
+		} else {
+			// Add COUNT(*) to the parts
+			parts = append(parts, "COUNT(*)")
+		}
+	}
+	return parts
+}
+
+func (s *bqDatabaseQuery) resolveDbColumnAlias(afm AnalyticFieldMapEntry, defaultAlias string) string {
+	result := defaultAlias
+	if afm.jsonTag != "" {
+		result = afm.jsonTag
+	}
+	return result
 }
 
 // Transform the entity through the chain of callbacks

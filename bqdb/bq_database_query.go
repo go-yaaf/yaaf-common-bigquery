@@ -15,10 +15,15 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+type countEnrty struct {
+	bqTag         string
+	dbColumnAlias string
+	isUnique      bool
+}
 type groupByEntry struct {
-	fieldName,
-	fieldAlias string
-	timePeriod entity.TimePeriodCode
+	bqTag         string
+	dbColumnAlias string
+	timePeriod    entity.TimePeriodCode
 }
 
 // BqDatabaseQuery struct for building and executing queries on BigQuery
@@ -26,21 +31,23 @@ type bqDatabaseQuery struct {
 	client      *bigquery.Client
 	tablePrefix string
 
-	factory        entity.EntityFactory
-	aggFuncs       []string
-	groupBys       []groupByEntry
-	allFilters     [][]database.QueryFilter               // List of lists of AND filters
-	anyFilters     [][]database.QueryFilter               // List of lists of OR filters
-	ascOrders      []any                                  // List of fields for ASC order
-	descOrders     []any                                  // List of fields for DESC order
-	callbacks      []func(in entity.Entity) entity.Entity // List of entity transformation callback functions
-	page           int                                    // Page number (for pagination)
-	limit          int                                    // Page size: how many results in a page (for pagination)
-	rangeField     string                                 // Field name for range filter (must be timestamp field)
-	rangeFrom      entity.Timestamp                       // Start timestamp for range filter
-	rangeTo        entity.Timestamp                       // End timestamp for range filter
-	fieldTagToType map[string]reflect.Kind                // Holds map of Entity's field s names to their types
-	bqFieldInfo    AnalyticFielsdMap
+	factory  entity.EntityFactory
+	aggFuncs []string
+	groupBys []groupByEntry
+	counts   []countEnrty
+
+	allFilters    [][]database.QueryFilter               // List of lists of AND filters
+	anyFilters    [][]database.QueryFilter               // List of lists of OR filters
+	ascOrders     []any                                  // List of fields for ASC order
+	descOrders    []any                                  // List of fields for DESC order
+	callbacks     []func(in entity.Entity) entity.Entity // List of entity transformation callback functions
+	page          int                                    // Page number (for pagination)
+	limit         int                                    // Page size: how many results in a page (for pagination)
+	rangeField    string                                 // Field name for range filter (must be timestamp field)
+	rangeFrom     entity.Timestamp                       // Start timestamp for range filter
+	rangeTo       entity.Timestamp                       // End timestamp for range filter
+	jsonTagToType map[string]reflect.Kind                // Holds map of Entity's field s names to their types
+	bqFieldInfo   AnalyticFielsdMap
 }
 
 // Apply adds a callback to apply on each result entity in the query

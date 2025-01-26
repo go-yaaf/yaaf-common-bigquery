@@ -11,45 +11,63 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-func (s *bqDatabaseQuery) Sum(fieldName string) database.IQueryAnalytic {
-	if fi, exists := s.bqFieldInfo[fieldName]; exists {
-		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" SUM(%s) as %s ", fieldName, fi.jsonTag))
+func (s *bqDatabaseQuery) Sum(bqTag string) database.IAnalyticQuery {
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" SUM(%s) as %s ", bqTag, fi.jsonTag))
 	}
 	return s
 }
 
-func (s *bqDatabaseQuery) Min(fieldName string) database.IQueryAnalytic {
-	if fi, exists := s.bqFieldInfo[fieldName]; exists {
-		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" MIN(%s) as %s ", fieldName, fi.jsonTag))
+func (s *bqDatabaseQuery) Min(bqTag string) database.IAnalyticQuery {
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" MIN(%s) as %s ", bqTag, fi.jsonTag))
 	}
 	return s
 }
 
-func (s *bqDatabaseQuery) Max(fieldName string) database.IQueryAnalytic {
-	if fi, exists := s.bqFieldInfo[fieldName]; exists {
-		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" MAX(%s) as %s ", fieldName, fi.jsonTag))
+func (s *bqDatabaseQuery) Max(bqTag string) database.IAnalyticQuery {
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" MAX(%s) as %s ", bqTag, fi.jsonTag))
 	}
 	return s
 }
 
-func (s *bqDatabaseQuery) Avg(fieldName string) database.IQueryAnalytic {
-	if fi, exists := s.bqFieldInfo[fieldName]; exists {
-		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" AVG(%s) as %s ", fieldName, fi.jsonTag))
+func (s *bqDatabaseQuery) Avg(bqTag string) database.IAnalyticQuery {
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" AVG(%s) as %s ", bqTag, fi.jsonTag))
 	}
 	return s
 }
 
-func (s *bqDatabaseQuery) GroupBy(fieldName string, period entity.TimePeriodCode) database.IQueryAnalytic {
-	fieldAlias := fieldName + "_grouped"
-	if fi, exists := s.bqFieldInfo[fieldName]; exists {
-		fieldAlias = fi.jsonTag
-	}
-
-	s.groupBys = append(s.groupBys, groupByEntry{
-		fieldName:  fieldName,
-		fieldAlias: fieldAlias,
-		timePeriod: period,
+func (s *bqDatabaseQuery) CountAll(bqTag string) database.IAnalyticQuery {
+	s.counts = append(s.counts, countEnrty{
+		bqTag:         "*",
+		dbColumnAlias: "count",
+		isUnique:      false,
 	})
+	return s
+}
+func (s *bqDatabaseQuery) CountUnique(bqTag string) database.IAnalyticQuery {
+
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.counts = append(s.counts, countEnrty{
+			bqTag:         bqTag,
+			dbColumnAlias: s.resolveDbColumnAlias(fi, bqTag+"_count"),
+			isUnique:      true,
+		})
+	}
+	return s
+}
+
+func (s *bqDatabaseQuery) GroupBy(bqTag string, period entity.TimePeriodCode) database.IAnalyticQuery {
+
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.groupBys = append(s.groupBys, groupByEntry{
+			bqTag:         bqTag,
+			dbColumnAlias: s.resolveDbColumnAlias(fi, bqTag+"_grouped"),
+			timePeriod:    period,
+		})
+	}
 	return s
 }
 

@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	cloud.google.com/go/bigquery v1.63.1
-	github.com/go-yaaf/yaaf-common v1.2.128
+	github.com/go-yaaf/yaaf-common v1.2.137
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	google.golang.org/api v0.200.0
 )

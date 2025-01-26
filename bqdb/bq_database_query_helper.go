@@ -39,6 +39,40 @@ func (s *bqDatabaseQuery) buildStatement() string {
 	return query
 }
 
+// Build the SQL query string based on filters, sorting, and pagination for analytic query
+func (s *bqDatabaseQuery) buildStatementAnalytic() (query string) {
+
+	// Build the SQL select
+	tblName := s.tableName()
+
+	// Build the WHERE clause
+	where := s.buildCriteria()
+	order := s.buildOrder()
+	limit := s.buildLimit()
+
+	//prepare groupBy part
+	groupBy := make([]string, 0, len(s.groupBys))
+
+	// build SELECT part
+	selectPart := strings.Join(s.aggFuncs, ",")
+
+	//go over group by part
+	for _, gb := range s.groupBys {
+		fn := getBQTimePeriodSQLOrOriginalFieldName(gb.fieldName, gb.timePeriod)
+		selectPart = strings.Join([]string{selectPart, fmt.Sprintf("%s AS %s ", fn, gb.fieldAlias)}, ",")
+		groupBy = append(groupBy, gb.fieldAlias)
+	}
+
+	if len(groupBy) == 0 {
+		query = fmt.Sprintf("SELECT %s FROM `%s` %s %s %s ", selectPart, tblName, where, order, limit)
+	} else {
+		groupBysList := strings.Join(groupBy, ",")
+		query = fmt.Sprintf("SELECT %s FROM `%s` %s GROUP BY %s %s %s ", selectPart, tblName, where, groupBysList, order, limit)
+	}
+
+	return query
+}
+
 // Build order clause based on the query data
 func (s *bqDatabaseQuery) buildOrder() string {
 
@@ -172,27 +206,27 @@ func (s *bqDatabaseQuery) buildFilter(qf database.QueryFilter) (sqlPart string) 
 
 	switch operator {
 	case database.Eq:
-		sqlPart = fmt.Sprintf("`%s` = %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s = %s", fieldName, formatValue(values[0]))
 	case database.Like:
-		sqlPart = fmt.Sprintf("`%s` LIKE %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s LIKE %s", fieldName, formatValue(values[0]))
 	case database.Gt:
-		sqlPart = fmt.Sprintf("`%s` > %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s > %s", fieldName, formatValue(values[0]))
 	case database.Lt:
-		sqlPart = fmt.Sprintf("`%s` < %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s < %s", fieldName, formatValue(values[0]))
 	case database.Gte:
-		sqlPart = fmt.Sprintf("`%s` >= %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s >= %s", fieldName, formatValue(values[0]))
 	case database.Lte:
-		sqlPart = fmt.Sprintf("`%s` <= %s", fieldName, formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s <= %s", fieldName, formatValue(values[0]))
 	case database.Between:
-		sqlPart = fmt.Sprintf("`%s` BETWEEN %s AND %s", fieldName, formatValue(values[0]), formatValue(values[1]))
+		sqlPart = fmt.Sprintf("%s BETWEEN %s AND %s", fieldName, formatValue(values[0]), formatValue(values[1]))
 	case database.In:
-		sqlPart = fmt.Sprintf("`%s` IN (%s)", fieldName, s.buildListForFilter(qf))
+		sqlPart = fmt.Sprintf("%s IN (%s)", fieldName, s.buildListForFilter(qf))
 	case database.NotIn:
-		sqlPart = fmt.Sprintf("`%s` NOT IN (%s)", fieldName, s.buildListForFilter(qf))
+		sqlPart = fmt.Sprintf("%s NOT IN (%s)", fieldName, s.buildListForFilter(qf))
 
 	default:
 		// Handle any other cases like Neq, Contains, etc.
-		sqlPart = fmt.Sprintf("`%s` %s %s", fieldName, string(operator), formatValue(values[0]))
+		sqlPart = fmt.Sprintf("%s %s %s", fieldName, string(operator), formatValue(values[0]))
 	}
 
 	return
@@ -264,11 +298,14 @@ func buildFieldsTypesMap(entity entity.Entity) map[string]reflect.Kind {
 	// Loop over the fields in the struct
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		// Get the JSON tag
-		jsonTag := field.Tag.Get("bigquery")
-		if jsonTag != "" {
+		if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
 			// Store the JSON tag and the field type in the map
 			fieldMap[jsonTag] = field.Type.Kind()
+		} else {
+			// JSON tag for a field is not specified, try to use "bq" tag instead
+			if bqTag := field.Tag.Get("bq"); bqTag != "" {
+				fieldMap[bqTag] = field.Type.Kind()
+			}
 		}
 	}
 	return fieldMap
@@ -306,4 +343,72 @@ func toAnySlice(val any) []any {
 func isFunctionSupported(f database.AggFunc) bool {
 	_, ok := functions[database.AggFunc(strings.ToLower(string(f)))]
 	return ok
+}
+
+type AnalyticFieldMapEntry struct {
+	goType  reflect.Kind
+	dbType  string
+	jsonTag string
+}
+
+// AnalyticsFieldMap holds map of fields names of an conrete type (that is of EntitySharded) instance
+// to AnalyticsFieldMapEntry
+type AnalyticFielsdMap map[string]AnalyticFieldMapEntry
+
+// Function to build map of field names and their types
+func buildAnalyticFieldsdMap(entity entity.Entity) AnalyticFielsdMap {
+
+	fieldMap := make(AnalyticFielsdMap)
+
+	// Get the type of the struct
+	t := reflect.TypeOf(entity).Elem()
+
+	// Loop over the fields in the struct
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Get the BQ tag
+		bqTag := field.Tag.Get("bq")
+		if bqTag == "" {
+			continue
+		}
+		jsonTag := field.Tag.Get("json")
+
+		// get DB type to cast to, if specified
+		bqCastTo := field.Tag.Get("castTo")
+		fieldMap[bqTag] = AnalyticFieldMapEntry{
+			dbType:  bqCastTo,
+			goType:  field.Type.Kind(),
+			jsonTag: jsonTag,
+		}
+	}
+	return fieldMap
+}
+
+// Function to return the corresponding BigQuery SQL transformation
+func getBQTimePeriodSQLOrOriginalFieldName(fieldName string, period entity.TimePeriodCode) string {
+	// Milliseconds in each time unit
+	const (
+		MinuteMillis = 60 * 1000
+		HourMillis   = 60 * MinuteMillis
+		DayMillis    = 24 * HourMillis
+		WeekMillis   = 7 * DayMillis
+	)
+	switch period {
+	case entity.TimePeriodCodes.MINUTE:
+		return fmt.Sprintf("start_time - MOD(start_time, %d)", MinuteMillis)
+	case entity.TimePeriodCodes.HOUR:
+		return fmt.Sprintf("start_time - MOD(start_time, %d)", HourMillis)
+	case entity.TimePeriodCodes.DAY:
+		return fmt.Sprintf("start_time - MOD(start_time, %d)", DayMillis)
+	case entity.TimePeriodCodes.WEEK:
+		return fmt.Sprintf("start_time - MOD(start_time, %d)", WeekMillis)
+	//case entity.TimePeriodCodes.MONTH:
+	// MONTH calculation is more complex due to varying month lengths; consider using TIMESTAMP_TRUNC for month.
+	///	return "TIMESTAMP_TRUNC(TIMESTAMP_MILLIS(start_time), MONTH)"
+
+	default:
+		//TODO ignore error of unknown TimePeriod code and return original field name
+		return fieldName
+	}
 }

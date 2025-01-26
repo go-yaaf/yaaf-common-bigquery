@@ -15,12 +15,20 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+type groupByEntry struct {
+	fieldName,
+	fieldAlias string
+	timePeriod entity.TimePeriodCode
+}
+
 // BqDatabaseQuery struct for building and executing queries on BigQuery
 type bqDatabaseQuery struct {
 	client      *bigquery.Client
 	tablePrefix string
 
 	factory        entity.EntityFactory
+	aggFuncs       []string
+	groupBys       []groupByEntry
 	allFilters     [][]database.QueryFilter               // List of lists of AND filters
 	anyFilters     [][]database.QueryFilter               // List of lists of OR filters
 	ascOrders      []any                                  // List of fields for ASC order
@@ -32,6 +40,7 @@ type bqDatabaseQuery struct {
 	rangeFrom      entity.Timestamp                       // Start timestamp for range filter
 	rangeTo        entity.Timestamp                       // End timestamp for range filter
 	fieldTagToType map[string]reflect.Kind                // Holds map of Entity's field s names to their types
+	bqFieldInfo    AnalyticFielsdMap
 }
 
 // Apply adds a callback to apply on each result entity in the query
@@ -584,6 +593,28 @@ func mapToStruct(m map[string]bigquery.Value, output interface{}) error {
 			case reflect.Bool:
 				if v, ok := mapValue.(bool); ok {
 					field.SetBool(v)
+				}
+
+			case reflect.Struct:
+				// Handle time.Time explicitly
+				if field.Type() == reflect.TypeOf(time.Time{}) {
+					switch v := mapValue.(type) {
+					case time.Time:
+						// Directly set the time.Time value
+						field.Set(reflect.ValueOf(v))
+					case string:
+						// Parse the string as a time value
+						parsedTime, err := time.Parse(time.RFC3339, v)
+						if err == nil {
+							field.Set(reflect.ValueOf(parsedTime))
+						}
+					case int64:
+						// Interpret the int64 as a UNIX timestamp in seconds
+						field.Set(reflect.ValueOf(time.Unix(v, 0)))
+					case float64:
+						// Interpret the float64 as a UNIX timestamp in seconds
+						field.Set(reflect.ValueOf(time.Unix(int64(v), 0)))
+					}
 				}
 			}
 		}

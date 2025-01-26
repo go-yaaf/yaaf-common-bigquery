@@ -202,6 +202,18 @@ func (db *BqDatabase) Query(factory entity.EntityFactory) database.IQuery {
 	}
 }
 
+func (db *BqDatabase) QueryAdvanced(factory entity.EntityFactory) database.IAdvancedQuery {
+
+	bq := &bqDatabaseQuery{
+		client:         db.client,
+		factory:        factory,
+		tablePrefix:    fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
+		fieldTagToType: buildFieldsTypesMap(factory()),
+		bqFieldInfo:    buildAnalyticFieldsdMap(factory()),
+	}
+	return bq
+}
+
 // DDL Operations (No-op) ------------------------------------------------------
 
 // ExecuteDDL is a no-op for BigQuery

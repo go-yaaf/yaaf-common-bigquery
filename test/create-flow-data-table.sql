@@ -1,4 +1,4 @@
-CREATE TABLE `your_project_id.your_dataset_id.flow-data` (
+CREATE TABLE `shieldiot-staging.pulseiot.flow-data` (
   flow_id INT64 NOT NULL,
   device_id STRING NOT NULL,
   start_time TIMESTAMP NOT NULL, -- Changed to TIMESTAMP for proper partitioning

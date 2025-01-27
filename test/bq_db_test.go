@@ -1,6 +1,7 @@
 package test
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,9 @@ func TestEq(t *testing.T) {
 // The function logs the count of matching records and validates that the query results meet the expected criteria.
 
 func TestLike(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -135,7 +138,9 @@ func TestLike(t *testing.T) {
 //
 // The function logs the count of matching records and validates that the query results meet the expected criteria.
 func TestLikeAndNotInForString(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -199,7 +204,9 @@ func TestLikeAndNotInForString(t *testing.T) {
 // If any record violates the filtering conditions or an error occurs during the query, the test fails with an appropriate message.
 
 func TestLikeAndRangAndNotInForString(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -266,7 +273,9 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 // The function logs the total count of records matching the query and validates the results based on the callback function.
 // If any record violates the filtering conditions or an error occurs during the query, the test fails with an appropriate message.
 func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -331,7 +340,9 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 // The function logs the total count of records matching the query and validates the results based on the callback function.
 // If any record violates the filtering conditions or an error occurs during the query, the test fails with an appropriate message.
 func TestLikeAndRangeAndGt(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -396,7 +407,9 @@ func TestLikeAndRangeAndGt(t *testing.T) {
 // The function logs the total count of records matching the query and validates the results based on the callback function.
 // If any record violates the filtering conditions or an error occurs during the query, the test fails with an appropriate message.
 func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	//Filter(F("streamId").Eq(stream.(*Stream).Id)).
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -471,7 +484,9 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 // - If any record violates the filtering conditions (e.g., `src_ip` does not match the pattern or `proto` is "ICMP"), the test fails with an error.
 // - If the sorting of the `bytes_to_srv` field is incorrect (i.e., the first record has a higher `bytes_to_srv` value than the last), the test fails.
 func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -543,7 +558,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 // Expected output:
 // - The total sum of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -592,7 +609,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 // Expected output:
 // - The maximum value of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -639,7 +658,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 // Expected output:
 // - The average value of `bytes_to_srv` for the filtered records.
 func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -686,7 +707,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 // Expected output:
 // - The total count of records that match the specified filters.
 func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -735,7 +758,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 // - A result map where each key is a unique `src_ip`, and the value is the count of records for that `src_ip`.
 // - A total count of all records that match the filters and grouping.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -776,7 +801,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
 // - A result map where each key is a unique `src_ip`, and the value is the count of records for that `src_ip`.
 // - A total count of all records that were processed by the query.
 func TestGroupCountOnly(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -816,7 +843,9 @@ func TestGroupCountOnly(t *testing.T) {
 // where the IP matches a pattern, the protocol is either TCP or UDP, and the start time falls within a specific range.
 // This test ensures that the query runs successfully and provides expected results for the sum aggregation.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -858,7 +887,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T)
 // where the IP matches a pattern, the protocol is either TCP or UDP, and the start time falls within a specific range.
 // This test ensures that the query runs successfully and provides expected results for aggregation.
 func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {
@@ -900,7 +931,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.
 // The query's purpose is to create a histogram that aggregates the total `bytes_to_srv` per hour for network traffic records that match the specified filters.
 // This test ensures that the query runs successfully and provides the expected hourly histogram of data.
 func TestHistogram(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {

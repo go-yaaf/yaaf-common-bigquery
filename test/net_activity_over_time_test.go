@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
@@ -34,6 +35,9 @@ func NewNetworkActivityOverTime(shardKey string) entity.EntityFactory {
 	}
 }
 func TestNetworkActivityOverTime(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	shardKey := "etecnic-1"
 	factory := NewNetworkActivityOverTime(shardKey)
 

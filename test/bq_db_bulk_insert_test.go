@@ -10,7 +10,9 @@ import (
 )
 
 func TestBQBulkInsert(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	os.Setenv("BQ_BATCH_SIZE", "5000")
 	os.Setenv("BQ_BATCH_TIMEOUT", "15")
 

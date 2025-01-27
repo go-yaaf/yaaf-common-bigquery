@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
@@ -39,7 +40,9 @@ func NewDeviceConsumption(shardKey string) entity.EntityFactory {
 }
 
 func TestDeviceTimeLine(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	shardKey := "etecnic-1"
 	factory := NewDeviceConsumption(shardKey)
 

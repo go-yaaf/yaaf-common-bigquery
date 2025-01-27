@@ -1,8 +1,8 @@
 CREATE TABLE `shieldiot-staging.pulseiot.flow-data` (
   flow_id INT64 NOT NULL,
   device_id STRING NOT NULL,
-  start_time TIMESTAMP NOT NULL, -- Changed to TIMESTAMP for proper partitioning
-  end_time TIMESTAMP NOT NULL,
+  start_time INT64 NOT NULL, -- Changed to TIMESTAMP for proper partitioning
+  end_time INT64 NOT NULL,
   src_ip STRING NOT NULL,
   src_port INT64 NOT NULL,
   dst_ip STRING NOT NULL,

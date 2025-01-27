@@ -953,3 +953,46 @@ func TestHistogram(t *testing.T) {
 	}
 	logger.Debug("count: %f\n %v", count, result)
 }
+
+var createFlowDataSql = `
+CREATE TABLE %s (
+  flow_id INT64 NOT NULL,
+  device_id STRING NOT NULL,
+  start_time INT64 NOT NULL,  
+  end_time INT64 NOT NULL, 
+  src_ip STRING NOT NULL,
+  src_port INT64 NOT NULL,
+  dst_ip STRING NOT NULL,
+  dst_port INT64 NOT NULL,
+  pckt_to_srv INT64 NOT NULL,
+  pckt_to_client INT64 NOT NULL,
+  bytes_to_srv INT64 NOT NULL,
+  bytes_to_client INT64 NOT NULL,
+  protocol STRING NOT NULL, 
+  pcap STRING NOT NULL,
+  alerted BOOL NOT NULL 
+)
+CLUSTER BY dst_ip,src_ip;          
+`
+
+func TestExecDDL(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
+
+	if err != nil {
+		t.Fatalf("NewBqDatabase failed: %v", err)
+	}
+
+	p := map[string][]string{
+		"shardKey":  {"demo"},
+		"tableName": {"flow-data"},
+		"sql":       {createFlowDataSql},
+	}
+
+	err = bqdb.ExecuteDDL(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

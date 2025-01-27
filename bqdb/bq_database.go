@@ -225,9 +225,52 @@ func (db *BqDatabase) PurgeTable(table string) error {
 	return fmt.Errorf("PurgeTable is not supported in BigQuery")
 }
 
-// ExecuteDDL is a no-op for BigQuery
+// ExecuteDDL tailored for CREATE_IF_NOT_EXIST sharded
+// flow-record table.
 func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
-	return fmt.Errorf("ExecuteDDL is not supported in BigQuery")
+
+	shardKey := ddl["shardKey"][0]
+	sql := ddl["sql"][0]
+	tableName := ddl["tableName"][0]
+
+	tableId := fmt.Sprintf("%s-%s", tableName, shardKey)
+	tableFullQualifyingName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, tableId)
+	// Reference the dataset and table
+	dataset := db.client.Dataset(db.dataSet)
+	table := dataset.Table(tableId)
+
+	// Check if the table exists
+	_, err := table.Metadata(context.Background())
+	if err == nil {
+		// Table already exists, no need to create
+		return nil
+	} else {
+		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return fmt.Errorf("failed to check if table %s exists: %v", tableId, err)
+		}
+	}
+
+	sql = fmt.Sprintf(sql, fmt.Sprintf("`%s`", tableFullQualifyingName))
+
+	// Run the query
+	query := db.client.Query(sql)
+	job, err := query.Run(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to execute query: %v", err)
+	}
+
+	// Wait for the query to complete
+	status, err := job.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
+	}
+
+	if err := status.Err(); err != nil {
+		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
+	}
+
+	return nil
+
 }
 
 // ExecuteSQL is a no-op for BigQuery

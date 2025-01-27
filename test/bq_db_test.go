@@ -31,7 +31,9 @@ var streamId = "etecnic-1"
 //
 // The function logs the records that match the query and validates the successful execution of the equality filter.
 func TestEq(t *testing.T) {
-
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {

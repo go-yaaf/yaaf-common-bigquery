@@ -34,7 +34,7 @@ func (s *bqDatabaseQuery) Max(bqTag string) database.IAnalyticQuery {
 
 func (s *bqDatabaseQuery) Avg(bqTag string) database.IAnalyticQuery {
 	if fi, exists := s.bqFieldInfo[bqTag]; exists {
-		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" AVG(%s) as %s ", bqTag, fi.jsonTag))
+		s.aggFuncs = append(s.aggFuncs, fmt.Sprintf(" AVG(%s) as %s ", bqTag, s.resolveDbColumnAlias(fi, bqTag+"_avg")))
 	}
 	return s
 }

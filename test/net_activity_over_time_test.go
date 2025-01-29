@@ -9,7 +9,6 @@ import (
 	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
 	. "github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
-	"github.com/go-yaaf/yaaf-common/logger"
 )
 
 type NewtworkActivityOverTime struct {
@@ -68,6 +67,4 @@ func TestNetworkActivityOverTime(t *testing.T) {
 
 	// Print the result
 	fmt.Println(string(jsonData))
-	logger.Debug("count: %d", len(entities))
-
 }

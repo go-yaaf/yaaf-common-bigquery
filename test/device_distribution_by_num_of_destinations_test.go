@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
-	. "github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"github.com/go-yaaf/yaaf-common/logger"
 )
@@ -51,9 +50,6 @@ func Test_Device_Distribution_By_Num_Of_Destinations(t *testing.T) {
 	}
 
 	qa := bqdb.AdvancedQuery(factory)
-	//qa.Filter(F("start_time").Between(1735776000000, 1736467200000)).
-
-	Sort("device_id-")
 
 	entities, err := qa.GroupBy("device_id", entity.TimePeriodCodes.UNDEFINED).
 		CountUnique("dst_ip").

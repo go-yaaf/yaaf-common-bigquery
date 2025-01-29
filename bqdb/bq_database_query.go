@@ -28,8 +28,9 @@ type groupByEntry struct {
 
 // BqDatabaseQuery struct for building and executing queries on BigQuery
 type bqDatabaseQuery struct {
-	client      *bigquery.Client
-	tablePrefix string
+	client           *bigquery.Client
+	lastSqlStatement string
+	tablePrefix      string
 
 	factory  entity.EntityFactory
 	aggFuncs []string
@@ -523,7 +524,7 @@ func (s *bqDatabaseQuery) Histogram2D(field string, function database.AggFunc, d
 
 // ToString returns the string representation of the query
 func (s *bqDatabaseQuery) ToString() string {
-	return ""
+	return s.lastSqlStatement
 }
 
 // Unused methods for stubbing other parts of the query interface (if needed for future expansion)

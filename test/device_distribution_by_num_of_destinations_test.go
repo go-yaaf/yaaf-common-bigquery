@@ -17,7 +17,7 @@ type DeviceDestinationDistribution struct {
 	StreamId   string `json:"-"`
 	TimePoint  int64  `json:"-"          bq:"start_time"`
 	DeviceId   string `json:"deviceId"   bq:"device_id"`
-	NumOfDstIp int64  `json:"numOdDstIp" bq:"dst_ip"`
+	NumOfDstIp int64  `json:"numOfDstIp" bq:"dst_ip"`
 }
 
 func (f *DeviceDestinationDistribution) KEY() string {
@@ -51,8 +51,9 @@ func Test_Device_Distribution_By_Num_Of_Destinations(t *testing.T) {
 	}
 
 	qa := bqdb.AdvancedQuery(factory)
-	qa.Filter(F("start_time").Between(1735776000000, 1736467200000)).
-		Sort("device_id-")
+	//qa.Filter(F("start_time").Between(1735776000000, 1736467200000)).
+
+	Sort("device_id-")
 
 	entities, err := qa.GroupBy("device_id", entity.TimePeriodCodes.UNDEFINED).
 		CountUnique("dst_ip").

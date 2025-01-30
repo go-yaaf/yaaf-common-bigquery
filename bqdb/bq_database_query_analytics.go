@@ -40,11 +40,13 @@ func (s *bqDatabaseQuery) Avg(bqTag string) database.IAnalyticQuery {
 }
 
 func (s *bqDatabaseQuery) CountAll(bqTag string) database.IAnalyticQuery {
-	s.counts = append(s.counts, countEnrty{
-		bqTag:         "*",
-		dbColumnAlias: "count",
-		isUnique:      false,
-	})
+	if fi, exists := s.bqFieldInfo[bqTag]; exists {
+		s.counts = append(s.counts, countEnrty{
+			bqTag:         "*",
+			dbColumnAlias: s.resolveDbColumnAlias(fi, "count"),
+			isUnique:      false,
+		})
+	}
 	return s
 }
 func (s *bqDatabaseQuery) CountUnique(bqTag string) database.IAnalyticQuery {

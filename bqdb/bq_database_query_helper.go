@@ -52,7 +52,9 @@ func (s *bqDatabaseQuery) buildStatementAnalytic() (query string) {
 
 	// build SELECT part
 	selectPart := strings.Join(s.aggFuncs, ",")
-	selectPart += strings.Join(s.buildCountPart(), ",")
+	if counts := strings.Join(s.buildCountPart(), ","); len(counts) > 0 {
+		selectPart = strings.Join([]string{selectPart, counts}, ",")
+	}
 
 	//prepare groupBy part
 	groupBy := make([]string, 0, len(s.groupBys))
@@ -265,7 +267,7 @@ func (s *bqDatabaseQuery) buildCountPart() []string {
 			}
 		} else {
 			// Add COUNT(*) to the parts
-			parts = append(parts, "COUNT(*)")
+			parts = append(parts, fmt.Sprintf("COUNT(*) AS %s", entry.dbColumnAlias))
 		}
 	}
 	return parts

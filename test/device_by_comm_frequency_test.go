@@ -52,7 +52,9 @@ func TestDevicesByCommFrequency(t *testing.T) {
 		t.Skip("Skipping testing in CI environment")
 	}
 
-	from, to := 1735776000000, 1736467200000
+	from, _ := ConvertToTimestamp("01-01-2025 00:00")
+	to, _ := ConvertToTimestamp("10-01-2025 00:00")
+
 	maxNumOfFlows := int64((to - from) / 30000)
 
 	shardKey := "juuice-1"

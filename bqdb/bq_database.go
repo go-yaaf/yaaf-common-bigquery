@@ -141,11 +141,14 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 
 		// Create a context with timeout for each batch
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
 
-		if _, err := db.bulkInsertInternal(ctx, batch); err != nil {
+		_, err := db.bulkInsertInternal(ctx, batch)
+		cancel()
+
+		if err != nil {
 			return int64(totalInserted), err
 		}
+
 		totalInserted += len(batch)
 	}
 

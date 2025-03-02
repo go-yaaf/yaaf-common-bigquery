@@ -275,7 +275,44 @@ func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
 
 // ExecuteSQL is a no-op for BigQuery
 func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
-	return 0, fmt.Errorf("ExecuteSQL is not supported in BigQuery")
+
+	ctx := context.Background()
+
+	//resolve table name
+	if len(args) == 0 {
+		panic("no table name passed to bq.ExecuteSQL")
+	}
+
+	tableFullQualifyedName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, args[0])
+
+	sql = strings.Replace(sql, "{table_name}", tableFullQualifyedName, 1)
+
+	query := db.client.Query(sql)
+
+	job, err := query.Run(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// Wait for the query to complete
+	status, err := job.Wait(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("execute sql failed with error: %s", err)
+	}
+
+	if err := status.Err(); err != nil {
+		return 0, fmt.Errorf("execute sql failed with error: %s", err)
+	}
+
+	// Retrieve job statistics
+	jobStatus, err := job.Status(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve job status: %w", err)
+	}
+
+	// Get the number of deleted rows
+	numDeletedRows := jobStatus.Statistics.Details.(*bigquery.QueryStatistics).NumDMLAffectedRows
+
+	return numDeletedRows, nil
 }
 
 // ExecuteQuery executes a native SQL query and returns the result as JSON

@@ -41,7 +41,7 @@ type FlowRecord struct {
 	Alerted       bool   `json:"alerted"         ` // Whether the flow triggered an alert
 }
 
-func (f *FlowRecord) TABLE() string { return fmt.Sprintf("flow-data-%s", f.KEY()) }
+func (f *FlowRecord) TABLE() string { return fmt.Sprintf("flow-data-%s", f.StreamId) }
 func (f *FlowRecord) KEY() string   { return fmt.Sprintf("flow-data-%s", f.StreamId) }
 
 func NewFlowRecordEntity(streamId string) EntityFactory {

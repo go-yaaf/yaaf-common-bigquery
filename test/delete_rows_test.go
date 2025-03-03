@@ -29,5 +29,5 @@ func TestDeleteRowsFromFlow(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	fmt.Printf("records deleted: %d", affectedRecords)
+	fmt.Printf("records deleted: %d\n", affectedRecords)
 }

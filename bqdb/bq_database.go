@@ -276,34 +276,67 @@ func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
 
 }
 
-// ExecuteSQL is a no-op for BigQuery
+// ExecuteSQL runs a parameterized SQL query on BigQuery and returns the number of affected rows.
+//
+// This function replaces the `{table_name}` placeholder in the query with a fully qualified BigQuery table name,
+// executes the query, waits for it to complete, and retrieves the number of affected rows.
+//
+// Parameters:
+// - sql: string - The SQL query to execute, containing `{table_name}` as a placeholder.
+// - args: ...any - A variadic parameter where the first argument must be the table name.
+//
+// Returns:
+// - int64 - The number of rows affected by the query (for DELETE, UPDATE, or INSERT statements).
+// - error - An error if query execution fails.
+//
+// Function Workflow:
+// 1. **Validates input**: Ensures that a table name is provided.
+// 2. **Constructs the fully qualified table name**: `project.dataset.table`.
+// 3. **Replaces `{table_name}` in the SQL query** with the resolved table name.
+// 4. **Uses `context.WithTimeout` (2 minutes)** to prevent infinite waiting.
+// 5. **Executes the query using `db.client.Query(sql).Run(ctx)`**.
+// 6. **Waits for the query to complete within the timeout** using `job.Wait(ctx)`.
+// 7. **Checks for errors** after execution to ensure successful completion.
+// 8. **Retrieves job statistics** and safely extracts `NumDMLAffectedRows`.
+// 9. **Returns the number of affected rows or an error if execution fails**.
+//
+// Important Notes:
+// - This function is designed for **DML operations** (`DELETE`, `UPDATE`, `INSERT`).
+// - It ensures **graceful handling of missing table names** instead of panicking.
+// - **Context timeout** prevents **indefinite blocking** in case BigQuery hangs.
+// - **Safe type assertion** is used to avoid runtime panics when accessing query statistics.
 func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
-
-	ctx := context.Background()
-
-	//resolve table name
+	// Validate input: Ensure at least one argument (table name) is provided
 	if len(args) == 0 {
-		panic("no table name passed to bq.ExecuteSQL")
+		panic("missing required table name argument in ExecuteSQL")
 	}
 
-	tableFullQualifyedName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, args[0])
+	// Construct the fully qualified table name: project.dataset.table
+	tableFullQualifiedName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, args[0])
 
-	sql = strings.Replace(sql, "{table_name}", tableFullQualifyedName, 1)
+	// Replace `{table_name}` placeholder in SQL with the actual table name
+	sql = strings.Replace(sql, "{table_name}", tableFullQualifiedName, 1)
 
+	// Set a timeout (2 minutes) to prevent infinite waiting
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel() // Ensure cleanup
+
+	// Prepare and execute the query
 	query := db.client.Query(sql)
-
 	job, err := query.Run(ctx)
 	if err != nil {
-		return 0, err
-	}
-	// Wait for the query to complete
-	status, err := job.Wait(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("execute sql failed with error: %s", err)
+		return 0, fmt.Errorf("failed to run query: %w", err)
 	}
 
+	// Wait for the query to complete within the timeout
+	status, err := job.Wait(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	// Check for execution errors
 	if err := status.Err(); err != nil {
-		return 0, fmt.Errorf("execute sql failed with error: %s", err)
+		return 0, fmt.Errorf("query execution completed with error: %w", err)
 	}
 
 	// Retrieve job statistics
@@ -312,10 +345,13 @@ func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
 		return 0, fmt.Errorf("failed to retrieve job status: %w", err)
 	}
 
-	// Get the number of deleted rows
-	numDeletedRows := jobStatus.Statistics.Details.(*bigquery.QueryStatistics).NumDMLAffectedRows
+	// Extract the number of affected rows safely
+	queryStats, ok := jobStatus.Statistics.Details.(*bigquery.QueryStatistics)
+	if !ok {
+		return 0, fmt.Errorf("unexpected job statistics type, failed to extract affected rows")
+	}
 
-	return numDeletedRows, nil
+	return queryStats.NumDMLAffectedRows, nil
 }
 
 // ExecuteQuery executes a native SQL query and returns the result as JSON

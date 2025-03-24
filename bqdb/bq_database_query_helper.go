@@ -86,13 +86,21 @@ func (s *bqDatabaseQuery) buildOrder() string {
 		return ""
 	}
 
+	//resolve order's field alias
+	fn := func(bqTag string) string {
+		if v, ok := s.bqFieldInfo[bqTag]; ok {
+			return v.jsonTag
+		}
+		return bqTag
+	}
+
 	fields := make([]string, 0, l)
 	for _, field := range s.ascOrders {
-		fields = append(fields, fmt.Sprintf(" %s ASC", field.(string)))
+		fields = append(fields, fmt.Sprintf(" %s ASC", fn(field.(string))))
 	}
 
 	for _, field := range s.descOrders {
-		fields = append(fields, fmt.Sprintf(" %s DESC", field.(string)))
+		fields = append(fields, fmt.Sprintf(" %s DESC", fn(field.(string))))
 	}
 
 	order := fmt.Sprintf("ORDER BY %s", strings.Join(fields, " , "))

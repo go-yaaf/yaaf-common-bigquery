@@ -11,35 +11,37 @@ import (
 	"github.com/go-yaaf/yaaf-common/entity"
 )
 
-type NewtworkActivityOverTime struct {
+type PortDistribution struct {
 	BaseAnalyticEntity
-	StreamId     string `json:"-"`
-	TimePoint    int64  `json:"timestamp" bq:"start_time"`
-	NumOfDevices int64  `json:"value"     bq:"device_id"`
+	StreamId  string `json:"-"`
+	StartTime int64  `json:"-"          bq:"start_time"`
+	DstPort   int64  `json:"dstPort"    bq:"dst_port"`
+	PortCount int64  `json:"portCount"  bq:"count"` //flag that triggers  " COUNT(*) "  output in result SQL
 }
 
-func (f *NewtworkActivityOverTime) KEY() string {
+func (f *PortDistribution) KEY() string {
 	return f.StreamId
 }
 
-func (f *NewtworkActivityOverTime) TABLE() string {
+func (f *PortDistribution) TABLE() string {
 	return fmt.Sprintf("flow-data-%s", f.KEY())
 }
 
-func NewNetworkActivityOverTime(shardKey string) entity.EntityFactory {
+func NewPortDistribution(shardKey string) entity.EntityFactory {
 	return func() entity.Entity {
 		shardKey := shardKey
-		return &NewtworkActivityOverTime{
+		return &PortDistribution{
 			StreamId: shardKey,
 		}
 	}
 }
-func TestNetworkActivityOverTime(t *testing.T) {
+
+func TestPortDistribution(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("Skipping testing in CI environment")
 	}
 	shardKey := "etecnic-1"
-	factory := NewNetworkActivityOverTime(shardKey)
+	factory := NewPortDistribution(shardKey)
 
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
@@ -48,11 +50,13 @@ func TestNetworkActivityOverTime(t *testing.T) {
 	}
 
 	qa := bqdb.AdvancedQuery(factory)
-	qa.Filter(F("start_time").Between(1742083200000, 1742774400000)).
-		Sort("timestamp-")
 
-	entities, err := qa.GroupBy("start_time", entity.TimePeriodCodes.HOUR).
-		CountUnique("device_id").
+	qa.Filter(F("start_time").Between(1742083200000, 1742774400000)).
+		Sort("count-").
+		Limit(20)
+
+	entities, err := qa.GroupBy("dst_port", entity.TimePeriodCodes.UNDEFINED).
+		CountAll("count").
 		Compute()
 
 	if err != nil {

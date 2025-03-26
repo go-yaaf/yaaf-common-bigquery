@@ -260,6 +260,9 @@ func (s *bqDatabaseQuery) buildListForFilter(qf database.QueryFilter) string {
 			items = fmt.Sprintf("%s,'%d' ", items, val)
 		}
 	}
+	if len(items) > 0 {
+		items = items[1:]
+	}
 	return items
 }
 

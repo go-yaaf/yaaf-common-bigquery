@@ -207,6 +207,7 @@ func (db *BqDatabase) Query(factory entity.EntityFactory) database.IQuery {
 		factory:       factory,
 		tablePrefix:   fmt.Sprintf("%s.%s", db.projectId, db.dataSet),
 		jsonTagToType: buildFieldsTypesMap(factory()),
+		bqFieldInfo:   buildAnalyticFieldsdMap(factory()),
 	}
 }
 

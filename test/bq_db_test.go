@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	bigquerydb "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
 	. "github.com/go-yaaf/yaaf-common/database"
@@ -13,7 +12,9 @@ import (
 )
 
 var streamId = "etecnic-1"
-
+var ipPattern = "10.245.137.%"
+var from = entity.Timestamp(1742983263468) //26 March 2025 10:01:03.486
+var to = entity.Timestamp(1742983299121)   //26 March 2025 10:01:39.121
 // TestEq tests a BigQuery query with an equality (Eq) filter and retrieves the results.
 //
 // This function performs the following steps:
@@ -71,7 +72,8 @@ func TestEq(t *testing.T) {
 // - bqdb: The BigQuery database connection object, which is used to run the query.
 // - err: The error object, used to capture any issues with the database connection or query execution.
 // - pattern: The IP address pattern ('10.164.41') that must match the 'src_ip' field in the records.
-// - cb: The callback function that performs validation on each entity in the result set. It checks whether the 'src_ip' starts with '10.164.41'. If this condition is not met, the test will fail.
+// - cb: The callback function that performs validation on each entity in the result set. It checks whether the 'src_ip' starts with '10.245.237'.
+// If this condition is not met, the test will fail.
 //
 // The function logs the count of matching records and validates that the query results meet the expected criteria.
 
@@ -86,19 +88,18 @@ func TestLike(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
 		return nil
 	}
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
+		Filter(F("src_ip").Like(ipPattern)).
 		Limit(1000).
 		Page(0).
 		Find()
@@ -120,7 +121,7 @@ func TestLike(t *testing.T) {
 //   - If either condition is not satisfied, the test fails with a detailed message.
 //
 // 3. Builds and executes a query that filters:
-//   - 'src_ip' field using a LIKE operator to match IPs starting with '10.164.41.%'.
+//   - 'src_ip' field using a LIKE operator to match IPs starting with '10.245.137.%'.
 //   - 'dst_ip' field using a NOT IN clause to exclude specific IPs ('1.1.1.1', '8.8.8.8', and '8.8.4.4').
 //   - Limits the query results to 1000 records and retrieves the first page (page 0).
 //
@@ -149,13 +150,12 @@ func TestLikeAndNotInForString(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 		dstIp := fr.DstIP
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
 		if dstIp == "1.1.1.1" || dstIp == "8.8.8.8" || dstIp == "8.8.4.4" {
 			t.Fatalf(" result set does not satisfy requested criteria: dst_ip = %s", dstIp)
@@ -165,7 +165,7 @@ func TestLikeAndNotInForString(t *testing.T) {
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
+		Filter(F("src_ip").Like(ipPattern)).
 		Filter(F("dst_ip").NotIn("1.1.1.1", "8.8.8.8", "8.8.4.4")).
 		Limit(1000).
 		Page(0).
@@ -183,12 +183,12 @@ func TestLikeAndNotInForString(t *testing.T) {
 // The function does the following:
 // 1. Connects to the BigQuery database for the 'shieldiot-staging' project and 'pulseiot' dataset.
 // 2. Defines a callback function (cb) to validate that the returned records meet specific criteria:
-//    - The 'src_ip' must start with the pattern '10.164.41'.
+//    - The 'src_ip' must start with the pattern '10.245.137'.
 //    - The 'dst_ip' must not be '1.1.1.1', '8.8.8.8', or '8.8.4.4'.
 // 3. Constructs a query that applies multiple filters to the data:
 //    - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.164.41.%'.
 //    - Filters 'dst_ip' using a NOT IN clause to exclude specific IP addresses ('1.1.1.1', '8.8.8.8', '8.8.4.4').
-//    - Filters 'start_time' using a range to include timestamps between 1722540000000 and 1722715200000.
+//    - Filters 'start_time' using a range to include timestamps between from - to
 //    - Limits the result to 1000 records and retrieves the first page (page 0).
 // 4. Executes the query and applies the callback function to validate the results.
 // 5. If the query fails or the results do not match the expected criteria, the test will fail.
@@ -199,7 +199,7 @@ func TestLikeAndNotInForString(t *testing.T) {
 // - err: The error object to handle any issues encountered while connecting to the database or executing the query.
 // - pattern: The IP address pattern (in this case, '10.164.41') used for filtering the 'src_ip' field.
 // - cb: A callback function applied to each entity in the result set, used to validate that:
-//   - The 'src_ip' starts with '10.164.41'.
+//   - The 'src_ip' starts with '10.245.137'.
 //   - The 'dst_ip' is not equal to '1.1.1.1', '8.8.8.8', or '8.8.4.4'. If it is, the test will fail.
 //
 // The function logs the total count of records matching the query and validates the results based on the callback function.
@@ -216,13 +216,12 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 		dstIp := fr.DstIP
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
 		if dstIp == "1.1.1.1" || dstIp == "8.8.8.8" || dstIp == "8.8.4.4" {
 			t.Fatalf(" result set does not satisfy requested criteria: dst_ip = %s", dstIp)
@@ -232,9 +231,9 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
+		Filter(F("src_ip").Like(ipPattern)).
 		Filter(F("dst_ip").NotIn("1.1.1.1", "8.8.8.8", "8.8.4.4")).
-		Range("start_time", 1722540000000, 1722715200000).
+		Range("start_time", from, to).
 		Limit(1000).
 		Page(0).
 		Find()
@@ -255,9 +254,8 @@ func TestLikeAndRangAndNotInForString(t *testing.T) {
 //   - The 'dst_port' must not be 80, 443, or 0.
 //
 // 3. Constructs a query that applies multiple filters to the data:
-//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.164.41.%'.
+//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.245.137.%'.
 //   - Filters 'dst_port' using a NOT IN clause to exclude ports 80, 443, and 0.
-//   - Filters 'start_time' using a range to include timestamps between 1722540000000 and 1722715200000.
 //   - Limits the result to 1000 records and retrieves the first page (page 0).
 //
 // 4. Executes the query and applies the callback function to validate the results.
@@ -285,12 +283,11 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
 		if fr.DstPort == 80 || fr.DstPort == 443 || fr.DstPort == 0 {
 			t.Fatalf(" result set does not satisfy requested criteria. DstPort of %s: has value of %d", fr.DstIP, fr.DstPort)
@@ -300,7 +297,7 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
+		Filter(F("src_ip").Like(ipPattern)).
 		Filter(F("dst_port").NotIn([]int{0, 443, 80})).
 		Range("start_time", 1722540000000, 1722715200000).
 		Limit(1000).
@@ -323,10 +320,9 @@ func TestLikeAndRangeAndInAsArrayOfInt(t *testing.T) {
 //   - The 'proto' field must not contain the values 'ICMP' or 'UDP'.
 //
 // 3. Constructs a query that applies multiple filters to the data:
-//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.164.41.%'.
+//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.245.137.%'.
 //   - Filters 'proto' using a NOT IN clause to exclude 'ICMP' and 'UDP' protocols.
 //   - Filters 'bytes_to_srv' using a greater than (GT) operator to include only records where the value is greater than 1500.
-//   - Filters 'start_time' using a range to include timestamps between 1722540000000 and 1722715200000.
 //   - Limits the result to 1000 records and retrieves the first page (page 0).
 //
 // 4. Executes the query and applies the callback function to validate the results.
@@ -351,26 +347,24 @@ func TestLikeAndRangeAndGt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
-
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
-		if fr.Proto == "ICMP" || fr.Proto == "UDP" {
-			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Proto)
+		if fr.Protocol == "ICMP" || fr.Protocol == "UDP" {
+			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Protocol)
 		}
 		return nil
 	}
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").NotIn([]string{"ICMP", "UDP"})).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").NotIn([]string{"ICMP", "UDP"})).
 		Filter(F("bytes_to_srv").Gt(1500)).
-		Range("start_time", 1722540000000, 1722715200000).
+		Range("start_time", from, to).
 		Limit(1000).
 		Page(0).
 		Find()
@@ -391,9 +385,8 @@ func TestLikeAndRangeAndGt(t *testing.T) {
 //   - The 'proto' field must not contain the value 'ICMP'.
 //
 // 3. Constructs a query that applies multiple filters to the data:
-//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.164.41.%'.
+//   - Filters 'src_ip' using a LIKE operator to match IPs starting with '10.245.137.%'.
 //   - Filters 'proto' using an IN clause to include only 'TCP' and 'UDP' protocols.
-//   - Filters 'start_time' using a range to include timestamps between 1722540000000 and 1722715200000.
 //   - Limits the result to 1000 records and retrieves the first page (page 0).
 //
 // 4. Executes the query and applies the callback function to validate the results.
@@ -419,24 +412,23 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
-		if fr.Proto == "ICMP" {
-			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Proto)
+		if fr.Protocol == "ICMP" {
+			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Protocol)
 		}
 		return nil
 	}
 
 	_, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		Limit(1000).
 		Page(0).
 		Find()
@@ -458,9 +450,8 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - The result set is sorted by the `bytes_to_srv` field in ascending order.
 //   - The result set is limited to 1000 records, and pagination is applied (starting from page 0).
 //
@@ -476,7 +467,7 @@ func TestLikeAndRangeAndInAsArrayOfString(t *testing.T) {
 // - t *testing.T: The testing object provided by Go's testing framework, used for managing test execution and reporting failures.
 //
 // The query's purpose is to return the first 1000 records that match the following conditions:
-// - The `src_ip` matches the pattern '10.164.41.%'.
+// - The `src_ip` matches the pattern '10.245.137.%'.
 // - The `proto` is either 'TCP' or 'UDP'.
 // - The `start_time` is within the specified timestamp range.
 // - The result set is ordered by the `bytes_to_srv` field in ascending order.
@@ -495,24 +486,23 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 
-	pattern := "10.164.41"
 	cb := func(entity entity.Entity) entity.Entity {
 		fr := entity.(*FlowRecord)
 
-		if !strings.HasPrefix(fr.SrcIP, pattern) {
-			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", pattern, fr.SrcIP)
+		if !strings.HasPrefix(fr.SrcIP, ipPattern[0:10]) {
+			t.Fatalf(" result set does not satisfy requested pattern of %s: has value of %s", ipPattern, fr.SrcIP)
 		}
-		if fr.Proto == "ICMP" {
-			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Proto)
+		if fr.Protocol == "ICMP" {
+			t.Fatalf(" result set does not satisfy requested criteria. protocol of %s: has value of %s", fr.DstIP, fr.Protocol)
 		}
 		return entity
 	}
 
 	entities, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
 		Apply(cb).
-		Filter(F("src_ip").Like("10.164.41.%")).
+		Filter(F("src_ip").Like(ipPattern)).
 		Filter(F("protocol").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Range("start_time", from, to).
 		Sort("bytes_to_srv").
 		Limit(1000).
 		Page(0).
@@ -522,6 +512,10 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if count == 0 {
+		logger.Debug("no records returned")
+		return
+	}
 	firstFr := entities[0].(*FlowRecord)
 	lastFr := entities[len(entities)-1].(*FlowRecord)
 
@@ -541,9 +535,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndOrderBy(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - The query performs a `SUM` aggregation on the `bytes_to_srv` field, which calculates the total sum of the `bytes_to_srv` for the filtered records.
 //
 // - If an error occurs during the database connection or query execution, the test fails with an error message.
@@ -570,10 +563,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 	}
 
 	touples, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("stream_id").Eq("juuice-1-01")).
 		Filter(F("protocol").In([]string{"TCP", "UDP"})).
-		Filter(F("start_time").Gte(1736873880000)).
-		Filter(F("end_time").Lte(1736873999000)).
+		Filter(F("start_time").Gte(to)).
+		Filter(F("end_time").Lte(from)).
 		GroupAggregation("bytes_to_srv", "sum", "minute")
 
 	if err != nil {
@@ -592,9 +584,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - The query performs a `MAX` aggregation on the `bytes_to_srv` field, which calculates the maximum value of the `bytes_to_srv` for the filtered records.
 //
 // - If an error occurs during the database connection or query execution, the test fails with an error message.
@@ -605,7 +596,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndSum(t *testing.T) {
 //
 // The query's purpose is to calculate the maximum value of the `bytes_to_srv` field for records that match the following conditions:
 // - The `src_ip` matches the pattern '10.164.41.%'.
-// - The `proto` is either 'TCP' or 'UDP'.
+// - The `protocol` is either 'TCP' or 'UDP'.
 // - The `start_time` is within the specified timestamp range.
 //
 // Expected output:
@@ -621,9 +612,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 	}
 
 	max, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		Aggregation("bytes_to_srv", "max")
 
 	if err != nil {
@@ -641,9 +632,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
-//   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
+//   - The `protocol` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
 //   - The query performs an `AVG` aggregation on the `bytes_to_srv` field, which calculates the average value of the `bytes_to_srv` for the filtered records.
 //
 // - If an error occurs during the database connection or query execution, the test fails with an error message.
@@ -654,7 +644,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndMax(t *testing.T) {
 //
 // The query's purpose is to calculate the average of the `bytes_to_srv` field for records that match the following conditions:
 // - The `src_ip` matches the pattern '10.164.41.%'.
-// - The `proto` is either 'TCP' or 'UDP'.
+// - The `protocol` is either 'TCP' or 'UDP'.
 // - The `start_time` is within the specified timestamp range.
 //
 // Expected output:
@@ -670,9 +660,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 	}
 
 	avg, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		Aggregation("bytes_to_srv", "avg")
 
 	if err != nil {
@@ -690,9 +680,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndAverage(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - The query performs a `COUNT` operation to count the total number of records that match the specified filters.
 //
 // - If an error occurs during the database connection or query execution, the test fails with an error message.
@@ -719,9 +708,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 	}
 
 	count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		Count()
 
 	if err != nil {
@@ -739,9 +728,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.%'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.%'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - A group-by aggregation is performed on the `src_ip` field, and a `COUNT` aggregation is applied to count the number of records for each `src_ip`.
 //
 // - If an error occurs during the database connection or query execution, the test fails with an error message.
@@ -751,7 +739,7 @@ func TestLikeAndRangeAndInAsArrayOfStringAndCount(t *testing.T) {
 // - t *testing.T: The testing object provided by Go's testing framework, used for managing test execution and reporting failures.
 //
 // The query's purpose is to count the number of records that match the following conditions:
-// - The `src_ip` matches the pattern '10.164.41.%'.
+// - The `src_ip` matches the pattern '10.245.137.%'.
 // - The `proto` is either 'TCP' or 'UDP'.
 // - The `start_time` is within the specified timestamp range.
 // The records are grouped by the `src_ip`, and the function returns the count of records for each unique `src_ip`.
@@ -770,9 +758,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupCount(t *testing.T) {
 	}
 
 	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		GroupCount("src_ip")
 
 	if err != nil {
@@ -830,9 +818,8 @@ func TestGroupCountOnly(t *testing.T) {
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - A group-by aggregation is performed on the `src_ip` field, and the `SUM` aggregation is applied to the `bytes_to_srv` field.
 //
 // - If an error occurs during the query building or execution, the test fails.
@@ -854,9 +841,9 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T)
 		t.Fatalf("NewBqDatabase failed: %v", err)
 	}
 	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		GroupAggregation("bytes_to_srv", "sum", "src_ip")
 
 	if err != nil {
@@ -874,9 +861,8 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForSum(t *testing.T)
 // Steps:
 // - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
 // - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.'.
+//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.245.137.'.
 //   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
 //   - A group-by aggregation is performed on the `src_ip` field, counting the number of records for each source IP.
 //
 // - If an error occurs during the query building or execution, the test fails.
@@ -899,54 +885,10 @@ func TestLikeAndRangeAndInAsArrayOfStringAndGroupAggregationForCount(t *testing.
 	}
 
 	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
+		Filter(F("src_ip").Like(ipPattern)).
+		Filter(F("protocol").In([]string{"TCP", "UDP"})).
+		Range("start_time", from, to).
 		GroupAggregation("src_ip", "count")
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	logger.Debug("count: %f\n %v", count, result)
-}
-
-// TestHistogram tests a query that:
-// 1. Filters rows based on a `src_ip` pattern using a LIKE operator (e.g., '10.164.41.%').
-// 2. Filters rows based on the `proto` field, using an IN clause to include only 'TCP' and 'UDP' protocols.
-// 3. Filters rows where the `start_time` is within a specified range.
-// 4. Generates a histogram of the `bytes_to_srv` field using the SUM aggregation, grouped by hourly intervals.
-//
-// Steps:
-// - A new BigQuery database connection is established using the `shieldiot-staging` project and `pulseiot` dataset.
-// - The query is built incrementally using the following conditions:
-//   - The `src_ip` is filtered using a LIKE operator to include IPs that start with '10.164.41.'.
-//   - The `proto` field is filtered using the IN clause to include only 'TCP' and 'UDP' protocol records.
-//   - The `start_time` is filtered to include records between 1722540000000 and 1722715200000 (a range of timestamps).
-//   - The histogram is generated by summing the `bytes_to_srv` field, with results grouped by hourly intervals (`time.Hour`).
-//
-// - If an error occurs during the query building or execution, the test fails.
-// - If the query is successful, the result, along with the total count of histogram buckets, is logged.
-//
-// Parameters:
-// - t *testing.T: The testing object provided by Go's testing framework, used for managing test execution and reporting failures.
-//
-// The query's purpose is to create a histogram that aggregates the total `bytes_to_srv` per hour for network traffic records that match the specified filters.
-// This test ensures that the query runs successfully and provides the expected hourly histogram of data.
-func TestHistogram(t *testing.T) {
-	if os.Getenv("CI") != "" {
-		t.Skip("Skipping testing in CI environment")
-	}
-	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
-
-	if err != nil {
-		t.Fatalf("NewBqDatabase failed: %v", err)
-	}
-
-	result, count, err := bqdb.Query(NewFlowRecordEntity(streamId)).
-		Filter(F("src_ip").Like("10.164.41.%")).
-		Filter(F("proto").In([]string{"TCP", "UDP"})).
-		Range("start_time", 1722540000000, 1722715200000).
-		Histogram("bytes_to_srv", "sum", "start_time", time.Hour)
 
 	if err != nil {
 		t.Fatal(err)

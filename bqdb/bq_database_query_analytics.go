@@ -104,7 +104,7 @@ func (s *bqDatabaseQuery) Compute() (out []entity.Entity, err error) {
 			out = append(out, entity)
 		}
 	}
-	// Get the rows count
+	// update last query string 
 	s.lastSqlStatement = queryString
 	return out, err
 }

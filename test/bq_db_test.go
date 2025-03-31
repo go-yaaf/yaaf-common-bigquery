@@ -59,9 +59,9 @@ func TestEq(t *testing.T) {
 // This function performs the following steps:
 // 1. Connects to the BigQuery database for the 'shieldiot-staging' project and the 'pulseiot' dataset.
 // 2. Defines a callback function (cb) that checks each result returned by the query:
-//    - Ensures that the 'src_ip' field starts with the specified pattern ('10.164.41').
+//    - Ensures that the 'src_ip' field starts with the specified pattern ('10.245.137').
 //    - If the 'src_ip' does not satisfy the pattern, the test will fail with an error message indicating the mismatch.
-// 3. Builds and executes a query that filters the 'src_ip' field using a LIKE operator to match IPs starting with '10.164.41.%'.
+// 3. Builds and executes a query that filters the 'src_ip' field using a LIKE operator to match IPs starting with '10.245.137.%'.
 // 4. Limits the query results to 1000 records and retrieves the first page (page 0).
 // 5. Applies the callback function (cb) to validate the results.
 // 6. Logs the total count of matching records.
@@ -135,7 +135,7 @@ func TestLike(t *testing.T) {
 // - err: The error object, used to capture any issues with the database connection or query execution.
 // - pattern: The IP address pattern ('10.164.41') that must match the 'src_ip' field in the records.
 // - cb: The callback function that performs validation on each entity in the result set. It checks whether:
-//   - The 'src_ip' starts with '10.164.41'.
+//   - The 'src_ip' starts with '10.245.137'.
 //   - The 'dst_ip' is not one of the excluded IPs: '1.1.1.1', '8.8.8.8', or '8.8.4.4'.
 //     If these conditions are not met, the test will fail.
 //
@@ -937,4 +937,32 @@ func TestExecDDL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestExecSQL(t *testing.T) {
+	sql := `
+SELECT * EXCEPT(pcap,rec_id ) FROM {table_name} WHERE (
+ ( NET.IPV4_TO_INT64 ( NET.IP_FROM_STRING ( src_ip)) BETWEEN NET.IPV4_TO_INT64 (
+ NET.IP_FROM_STRING ( '10.245.136.0')) AND NET.IPV4_TO_INT64 ( NET.IP_FROM_STRING ( '10.245.139.255')))) and 
+ ( TIMESTAMP_MILLIS(start_time) BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 120 MINUTE ) AND CURRENT_TIMESTAMP())`
+
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
+	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
+
+	if err != nil {
+		t.Fatalf("NewBqDatabase failed: %v", err)
+	}
+
+	tbName := NewFlowRecordEntity("etecnic-1")().TABLE()
+
+	entities, err := bqdb.ExecuteQuery("", sql, tbName)
+
+	if err != nil {
+		t.Fatalf("ExecuteQuery failed: %v", err)
+	}
+
+	logger.Debug("count: %d", len(entities))
+
 }

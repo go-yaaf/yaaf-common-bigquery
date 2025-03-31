@@ -313,9 +313,9 @@ func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
 	}
 
 	// Construct the fully qualified table name: project.dataset.table
-	tableFullQualifiedName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, args[0])
+	tableFullQualifiedName := fmt.Sprintf("`%s.%s.%s`", db.projectId, db.dataSet, args[0])
 
-	// Replace `{table_name}` placeholder in SQL with the actual table name
+	// Replace {table_name} placeholder in SQL with the actual table name
 	sql = strings.Replace(sql, "{table_name}", tableFullQualifiedName, 1)
 
 	// Set a timeout (2 minutes) to prevent infinite waiting
@@ -357,16 +357,20 @@ func (db *BqDatabase) ExecuteSQL(sql string, args ...any) (int64, error) {
 
 // ExecuteQuery executes a native SQL query and returns the result as JSON
 func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []entity.Json, err error) {
+
+	// Validate input: Ensure at least one argument (table name) is provided
+	if len(args) == 0 {
+		panic("missing required table name argument in ExecuteSQL")
+	}
+
+	// Construct the fully qualified table name: project.dataset.table
+	tableFullQualifiedName := fmt.Sprintf("`%s.%s.%s`", db.projectId, db.dataSet, args[0])
+
+	// Replace {table_name} placeholder in SQL with the actual table name
+	sql = strings.Replace(sql, "{table_name}", tableFullQualifiedName, 1)
+
 	ctx := context.Background()
 	query := db.client.Query(sql)
-
-	// Add arguments (parameters) to the query, if any
-	for i, arg := range args {
-		query.Parameters = append(query.Parameters, bigquery.QueryParameter{
-			Name:  fmt.Sprintf("param%d", i+1),
-			Value: arg,
-		})
-	}
 
 	// Execute the query
 	it, err := query.Read(ctx)
@@ -384,10 +388,11 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 			return nil, fmt.Errorf("error reading query result: %v", err)
 		}
 
-		//TODO check how to implement
-
-		// Convert BigQuery row to JSON format
-		//results = append(results, entity.Json(row))
+		converted := make(entity.Json)
+		for k, v := range row {
+			converted[k] = v
+		}
+		results = append(results, converted)
 	}
 
 	return

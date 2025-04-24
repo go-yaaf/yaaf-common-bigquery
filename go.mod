@@ -2,8 +2,6 @@ module github.com/go-yaaf/yaaf-common-bigquery
 
 go 1.22
 
-replace cloud.google.com/go/bigquery => cloud.google.com/go/bigquery v1.63.1
-
 require (
 	cloud.google.com/go/bigquery v1.63.1
 	github.com/go-yaaf/yaaf-common v1.2.139

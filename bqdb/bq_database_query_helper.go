@@ -409,10 +409,13 @@ func buildAnalyticFieldsdMap(entity entity.Entity) AnalyticFielsdMap {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
-		// Get the BQ tag
-		bqTag := field.Tag.Get("bq")
+		// Get the BQ tag. Try default BQ's SDK annotation tag first
+		bqTag := field.Tag.Get("bigquery")
+		//then try custom "bq" tag
 		if bqTag == "" {
-			continue
+			if bqTag = field.Tag.Get("bq"); bqTag == "" {
+				continue
+			}
 		}
 		jsonTag := field.Tag.Get("json")
 

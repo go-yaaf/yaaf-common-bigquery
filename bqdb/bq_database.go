@@ -372,6 +372,14 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 	ctx := context.Background()
 	query := db.client.Query(sql)
 
+	if len( args) > 1 {
+	    for i:= 1; i < len(args); i++ {
+			pn := fmt.Sprintf("param%d", i)
+			query.Parameters = []bigquery.QueryParameter{
+			{Name: pn, Value: args[i]},
+		}
+	}
+
 	// Execute the query
 	it, err := query.Read(ctx)
 	if err != nil {

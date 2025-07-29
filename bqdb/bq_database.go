@@ -134,10 +134,8 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 	totalInserted := 0
 
 	for start := 0; start < len(entities); start += batchSize {
-		end := start + batchSize
-		if end > len(entities) {
-			end = len(entities)
-		}
+
+		end := min(start+batchSize, len(entities))
 		batch := entities[start:end]
 
 		// Create a context with timeout for each batch

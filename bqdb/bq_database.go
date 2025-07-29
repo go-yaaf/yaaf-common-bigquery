@@ -11,6 +11,7 @@ import (
 	"github.com/go-yaaf/yaaf-common/config"
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
+	"github.com/go-yaaf/yaaf-common/logger"
 	"google.golang.org/api/iterator"
 )
 
@@ -120,7 +121,7 @@ func (db *BqDatabase) Delete(factory entity.EntityFactory, entityID string, keys
 	return fmt.Errorf("delete operation is not supported in BigQuery")
 }
 
-// Bulk Operations (No-op implementations) -------------------------------------
+// Bulk Operations -------------------------------------
 
 func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 
@@ -150,6 +151,8 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 		}
 
 		totalInserted += len(batch)
+
+		logger.Debug("BulkInsert: inserted %d records, total %d records so far", len(batch), totalInserted)
 	}
 
 	return int64(totalInserted), nil

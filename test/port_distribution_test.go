@@ -12,7 +12,7 @@ import (
 )
 
 type PortDistribution struct {
-	BaseAnalyticEntity
+	entity.BaseAnalyticEntity
 	StreamId  string `json:"-"`
 	StartTime int64  `json:"-"          bq:"start_time"`
 	DstPort   int64  `json:"dstPort"    bq:"dst_port"`

@@ -12,7 +12,7 @@ import (
 )
 
 type NewtworkActivityOverTime struct {
-	BaseAnalyticEntity
+	entity.BaseAnalyticEntity
 	StreamId     string `json:"-"`
 	TimePoint    int64  `json:"timestamp" bq:"start_time"`
 	NumOfDevices int64  `json:"value"     bq:"device_id"`

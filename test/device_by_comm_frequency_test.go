@@ -19,7 +19,7 @@ COUNT(*) AS passive,                            -- Number of activity records
 ROUND(100 * COUNT(*) / 3000, 2) AS percent_frequency -- Calculate activity % based on 3000 baseline
 */
 type DevicesByCommFrequency struct {
-	BaseAnalyticEntity
+	entity.BaseAnalyticEntity
 	StreamId  string `json:"-"`
 	DeviceId  string `json:"deviceId"   bq:"device_id"`
 	StartTime int64  `json:"timestamp"  bq:"start_time"`

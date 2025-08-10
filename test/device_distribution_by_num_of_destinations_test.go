@@ -12,7 +12,7 @@ import (
 )
 
 type DeviceDestinationDistribution struct {
-	BaseAnalyticEntity
+	entity.BaseAnalyticEntity
 	StreamId   string `json:"-"`
 	TimePoint  int64  `json:"-"          bq:"start_time"`
 	DeviceId   string `json:"deviceId"   bq:"device_id"`

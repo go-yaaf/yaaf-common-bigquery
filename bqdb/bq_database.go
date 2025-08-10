@@ -129,7 +129,7 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 	}
 
 	batchSize := config.Get().BigQueryBatchSize()
-	timeout := time.Duration(config.Get().CfgBigQueryBatchTimeouSec()) * time.Second // Set timeout duration for BQ bulk insert operation
+	timeout := time.Duration(config.Get().CfgBigQueryBatchTimeoutSec()) * time.Second // Set timeout duration for BQ bulk insert operation
 	totalInserted := 0
 
 	for start := 0; start < len(entities); start += batchSize {

@@ -199,7 +199,7 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 		return 0, err
 	}
 
-	// Build proto messages
+	// Build proto messages (reflection → dynamicpb)
 	msgs := make([]*dynamicpb.Message, 0, len(batch))
 	for _, e := range batch {
 		m, err := entityToProto(ts.msgDesc, e)
@@ -219,23 +219,44 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 		encoded[i] = b
 	}
 
+	// Retry policy
 	backoff := []time.Duration{100 * time.Millisecond, 300 * time.Millisecond, 800 * time.Millisecond, 1500 * time.Millisecond}
 	var lastErr error
 
+	// Helper: build a wait context a bit longer than submit ctx
+	buildWaitCtx := func() (context.Context, context.CancelFunc) {
+		// If caller gave   a deadline, add a small buffer; otherwise cap at 30s.
+		if dl, ok := ctx.Deadline(); ok {
+			remain := time.Until(dl)
+			// Give GetResult a little more than the submit path (min 2s, max 30s).
+			d := max(min(remain+2*time.Second, 30*time.Second), 2*time.Second)
+			return context.WithTimeout(context.Background(), d)
+		}
+		return context.WithTimeout(context.Background(), 30*time.Second)
+	}
+
 	for attempt := 0; attempt < len(backoff)+1; attempt++ {
-		// Append returns an AppendResult; must await it.
+		// Submit append using caller's ctx (respects   per-batch timeout)
 		res, err := ts.stream.AppendRows(ctx, encoded)
 		if err == nil {
-			// Wait for server ack/commit; this is what unblocks subsequent appends.
-			if _, gerr := res.GetResult(ctx); gerr == nil {
+			// Wait for server ack with a slightly longer context
+			waitCtx, cancel := buildWaitCtx()
+			_, gerr := res.GetResult(waitCtx)
+			cancel()
+			if gerr == nil {
 				return len(encoded), nil // SUCCESS
 			}
+			err = gerr
 		}
 
+		// Failure path
 		lastErr = err
+
+		// If caller's ctx is done, don't spin
 		if ctx.Err() != nil {
-			break // caller’s timeout/cancel
+			break
 		}
+		// Sleep only if another attempt remains
 		if attempt < len(backoff) {
 			time.Sleep(backoff[attempt])
 		}

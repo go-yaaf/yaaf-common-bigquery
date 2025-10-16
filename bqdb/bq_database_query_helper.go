@@ -565,3 +565,26 @@ func asFloat64(v reflect.Value) float64 {
 		return float64(asInt64(v))
 	}
 }
+
+// protoIdentSafe converts an arbitrary string into a valid protobuf identifier:
+// [A-Za-z_][A-Za-z0-9_]*
+func protoIdentSafe(s string) string {
+	if s == "" {
+		return "p_"
+	}
+	out := make([]rune, 0, len(s))
+	for i, r := range s {
+		ok := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' || (i > 0 && r >= '0' && r <= '9')
+		if ok {
+			out = append(out, r)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	// First rune must be letter or '_'
+	first := out[0]
+	if !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || first == '_') {
+		out = append([]rune{'p', '_'}, out...)
+	}
+	return string(out)
+}

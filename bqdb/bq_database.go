@@ -491,30 +491,27 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 	}
 
 	// Storage schema -> proto3 message descriptor (reflect-level)
-	scope := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, tableName)
+	scope := fmt.Sprintf("%s.%s.%s",
+		protoIdentSafe(db.projectId),
+		protoIdentSafe(db.dataSet),
+		protoIdentSafe(tableName),
+	)
 	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
 	if err != nil {
 		return nil, fmt.Errorf("StorageSchemaToProto3Descriptor: %w", err)
 	}
-
-	// Ensure it’s a MessageDescriptor and normalize to *descriptorpb.DescriptorProto (required by v1.63.1)
 	msgDesc, ok := desc.(protoreflect.MessageDescriptor)
 	if !ok {
-		return nil, fmt.Errorf("schema descriptor for %s is not a message", tableName)
+		return nil, fmt.Errorf("schema descriptor is not a message")
 	}
 	descriptorProto, err := adapt.NormalizeDescriptor(msgDesc)
 	if err != nil {
 		return nil, fmt.Errorf("NormalizeDescriptor: %w", err)
 	}
-
-	// Destination table resource name
-	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
-
-	// Create the managed stream bound to the table
 	stream, err := db.mw.NewManagedStream(
 		ctx,
 		managedwriter.WithDestinationTable(dest),
-		managedwriter.WithSchemaDescriptor(descriptorProto), // *descriptorpb.DescriptorProto
+		managedwriter.WithSchemaDescriptor(descriptorProto),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("NewManagedStream(%s): %w", dest, err)

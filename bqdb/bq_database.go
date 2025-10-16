@@ -194,7 +194,7 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 	}
 	table := batch[0].TABLE()
 
-	ts, err := db.getOrInitStream(ctx, table)
+	ts, err := db.getOrInitStream(context.Background(), table)
 	if err != nil {
 		return 0, err
 	}
@@ -504,7 +504,7 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 }
 
 func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*tableStream, error) {
-	// Fast path: return cached stream if present
+	// Fast path: cached
 	db.streamMu.RLock()
 	if ts, ok := db.streamCache[tableName]; ok {
 		db.streamMu.RUnlock()
@@ -512,24 +512,20 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 	}
 	db.streamMu.RUnlock()
 
-	// 1) Read live table metadata (for schema)
+	// Use caller ctx for quick metadata (fine if this times out)
 	tbl := db.client.Dataset(db.dataSet).Table(tableName)
 	md, err := tbl.Metadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("table metadata for %s: %w", tableName, err)
 	}
 
-	// 2) Build proto descriptor from BQ schema
 	storageSchema, err := adapt.BQSchemaToStorageTableSchema(md.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("BQSchemaToStorageTableSchema: %w", err)
 	}
 
-	// IMPORTANT: sanitize scope for proto identifier rules (no dashes, etc.)
-	scope := protoIdentSafe(fmt.Sprintf("%s_%s_%s",
-		db.projectId, db.dataSet, tableName,
-	))
-
+	// Flat, proto-safe scope (no dots, no dashes)
+	scope := protoIdentSafe(fmt.Sprintf("%s_%s_%s", db.projectId, db.dataSet, tableName))
 	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
 	if err != nil {
 		return nil, fmt.Errorf("StorageSchemaToProto3Descriptor: %w", err)
@@ -538,21 +534,20 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 	if !ok {
 		return nil, fmt.Errorf("schema descriptor for %s is not a message", tableName)
 	}
-
-	// 3) Destination resource name for the table (THIS is the missing dest)
-	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
-
-	// 4) v1.63.1 requires *descriptorpb.DescriptorProto; NormalizeDescriptor returns that.
 	descriptorProto, err := adapt.NormalizeDescriptor(msgDesc)
 	if err != nil {
 		return nil, fmt.Errorf("NormalizeDescriptor: %w", err)
 	}
 
-	// 5) Open managed stream bound to the table + schema
+	// IMPORTANT: create the stream with a long-lived context, not the batch ctx.
+	// Otherwise the cached stream becomes permanently canceled after the first batch.
+	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
 	stream, err := db.mw.NewManagedStream(
-		ctx,
+		context.Background(),
 		managedwriter.WithDestinationTable(dest),
 		managedwriter.WithSchemaDescriptor(descriptorProto),
+		// Optional safety: serialize inflight requests for  strict one-at-a-time
+		//managedwriter.WithMaxInflightRequests(1),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("NewManagedStream(%s): %w", dest, err)
@@ -566,7 +561,6 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 		createdAt: time.Now(),
 	}
 
-	// 6) Cache with race protection
 	db.streamMu.Lock()
 	if cur := db.streamCache[tableName]; cur == nil {
 		db.streamCache[tableName] = ts

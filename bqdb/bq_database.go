@@ -491,11 +491,9 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 	}
 
 	// IMPORTANT: sanitize scope for proto identifier rules (no dashes, etc.)
-	scope := fmt.Sprintf("%s.%s.%s",
-		protoIdentSafe(db.projectId),
-		protoIdentSafe(db.dataSet),
-		protoIdentSafe(tableName),
-	)
+	scope := protoIdentSafe(fmt.Sprintf("%s_%s_%s",
+		db.projectId, db.dataSet, tableName,
+	))
 
 	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
 	if err != nil {

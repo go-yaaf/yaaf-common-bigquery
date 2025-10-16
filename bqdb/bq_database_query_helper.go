@@ -3,11 +3,15 @@ package bqdb
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 var functions = map[database.AggFunc]string{
@@ -455,5 +459,109 @@ func getBQTimePeriodSQLOrOriginalFieldName(fieldName string, period entity.TimeP
 	default:
 		//TODO ignore error of unknown TimePeriod code and return original field name
 		return fieldName
+	}
+}
+
+func entityToProto(md protoreflect.MessageDescriptor, e entity.Entity) (*dynamicpb.Message, error) {
+	v := reflect.ValueOf(e)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("entity must be a struct or *struct, got %s", v.Kind())
+	}
+
+	// Build map: columnName -> reflect.Value
+	colToVal := make(map[string]reflect.Value, v.NumField())
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		// ignore fields explicitly marked bigquery:"-"
+		if tag := f.Tag.Get("bigquery"); tag == "-" {
+			continue
+		}
+		name := f.Tag.Get("bigquery")
+		if name == "" || name == "," {
+			name = f.Tag.Get("json")
+			if idx := strings.Index(name, ","); idx >= 0 {
+				name = name[:idx]
+			}
+		}
+		if name == "" {
+			name = strings.ToLower(f.Name) // last fallback
+		}
+		colToVal[name] = v.Field(i)
+	}
+
+	msg := dynamicpb.NewMessage(md)
+	fields := md.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		col := string(fd.Name())
+		rv, ok := colToVal[col]
+		if !ok || !rv.IsValid() {
+			continue // missing field is fine for nullable columns
+		}
+
+		// nil pointer? skip
+		if rv.Kind() == reflect.Pointer && rv.IsNil() {
+			continue
+		}
+		if rv.Kind() == reflect.Pointer {
+			rv = rv.Elem()
+		}
+
+		// map basic kinds; extend here if/when schema adds arrays/records
+		switch fd.Kind() {
+		case protoreflect.StringKind:
+			msg.Set(fd, protoreflect.ValueOfString(fmt.Sprintf("%v", rv.Interface())))
+		case protoreflect.BoolKind:
+			var b bool
+			switch rv.Kind() {
+			case reflect.Bool:
+				b = rv.Bool()
+			default:
+				b = fmt.Sprintf("%v", rv.Interface()) == "true"
+			}
+			msg.Set(fd, protoreflect.ValueOfBool(b))
+		case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+			msg.Set(fd, protoreflect.ValueOfInt32(int32(asInt64(rv))))
+		case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+			msg.Set(fd, protoreflect.ValueOfInt64(asInt64(rv)))
+		case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+			msg.Set(fd, protoreflect.ValueOfUint32(uint32(asInt64(rv))))
+		case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+			msg.Set(fd, protoreflect.ValueOfUint64(uint64(asInt64(rv))))
+		case protoreflect.DoubleKind, protoreflect.FloatKind:
+			msg.Set(fd, protoreflect.ValueOfFloat64(asFloat64(rv)))
+		default:
+			// RECORD/ARRAY not handled here; add as needed
+		}
+	}
+	return msg, nil
+}
+
+func asInt64(v reflect.Value) int64 {
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int64(v.Uint())
+	case reflect.String:
+		if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+func asFloat64(v reflect.Value) float64 {
+	switch v.Kind() {
+	case reflect.Float32, reflect.Float64:
+		return v.Float()
+	default:
+		return float64(asInt64(v))
 	}
 }

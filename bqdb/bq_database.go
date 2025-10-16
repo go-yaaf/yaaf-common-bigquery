@@ -5,20 +5,40 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
-	"cloud.google.com/go/bigquery"
 	"github.com/go-yaaf/yaaf-common/config"
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
+
+	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/bigquery/storage/managedwriter"
+	"cloud.google.com/go/bigquery/storage/managedwriter/adapt"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+type tableStream struct {
+	stream    *managedwriter.ManagedStream
+	bqSchema  bigquery.Schema
+	msgDesc   protoreflect.MessageDescriptor
+	tableFQN  string // projects/{p}/datasets/{d}/tables/{t}
+	createdAt time.Time
+}
 
 // BqDatabase struct implementing IDatabase for BigQuery
 type BqDatabase struct {
 	client *bigquery.Client
 	projectId,
 	dataSet string
+
+	// SWA client + per-table streams (lazy-init and cached).
+	streamMu    sync.RWMutex
+	mw          *managedwriter.Client
+	streamCache map[string]*tableStream // key: tableName
 }
 
 // NewBqDatabase creates a new BigQuery database connection using a URI.
@@ -35,42 +55,56 @@ type BqDatabase struct {
 // Returns:
 // - A new instance of the BqDatabase struct implementing the database.IDatabase interface.
 // - An error if the URI format is invalid or the BigQuery client creation fails.
-func NewBqDatabase(uri string) (database.IDatabase, error) {
-	// Validate URI schema
+func NewBqDatabase(uri string) (*BqDatabase, error) {
 	const schemaPrefix = "bq://"
 	if !strings.HasPrefix(uri, schemaPrefix) {
-		return nil, errors.New("invalid URI: schema must be 'bq'")
+		return nil, fmt.Errorf("invalid URI: must start with %q", schemaPrefix)
 	}
-
-	// Extract project ID and dataset name
-	trimmedURI := strings.TrimPrefix(uri, schemaPrefix)
-	parts := strings.Split(trimmedURI, ":")
-	if len(parts) != 2 {
-		return nil, errors.New("invalid URI format: must be 'bq://projectId:datasetName'")
+	trimmed := strings.TrimPrefix(uri, schemaPrefix)
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("invalid URI format; expected bq://<project>:<dataset>")
 	}
+	projectID, dataset := parts[0], parts[1]
 
-	projectId := parts[0]
-	dataSet := parts[1]
-
-	// Validate extracted values
-	if projectId == "" || dataSet == "" {
-		return nil, errors.New("invalid URI: projectId or datasetName is empty")
-	}
-
-	// Create BigQuery client
 	ctx := context.Background()
-	client, err := bigquery.NewClient(ctx, projectId)
+
+	// BigQuery data client
+	bqClient, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create BigQuery client: %v", err)
+		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
 
-	// Return BqDatabase instance
-	return &BqDatabase{client: client, dataSet: dataSet, projectId: projectId}, nil
+	// Storage Write API client (eagerly initialized here)
+	mwClient, err := managedwriter.NewClient(ctx, projectID)
+	if err != nil {
+		_ = bqClient.Close()
+		return nil, fmt.Errorf("managedwriter.NewClient: %w", err)
+	}
+
+	return &BqDatabase{
+		client:      bqClient,
+		projectId:   projectID,
+		dataSet:     dataset,
+		mw:          mwClient,
+		streamCache: make(map[string]*tableStream),
+	}, nil
 }
 
 // Close Closer includes method Close()
 func (db *BqDatabase) Close() error {
-	return db.client.Close()
+	var firstErr error
+	if db.mw != nil {
+		if err := db.mw.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if db.client != nil {
+		if err := db.client.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // Ping tests BigQuery connectivity (not really needed for BigQuery, stub)
@@ -154,18 +188,46 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 	return int64(totalInserted), nil
 }
 
-func (db *BqDatabase) bulkInsertInternal(ctx context.Context, entities []entity.Entity) (int, error) {
-	if len(entities) == 0 {
+func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Entity) (int, error) {
+	if len(batch) == 0 {
 		return 0, nil
 	}
+	table := batch[0].TABLE()
 
-	inserter := db.client.Dataset(db.dataSet).Table(entities[0].TABLE()).Inserter()
-	// Insert the records
-	if err := inserter.Put(ctx, entities); err != nil {
+	ts, err := db.getOrInitStream(ctx, table)
+	if err != nil {
 		return 0, err
 	}
 
-	return len(entities), nil
+	// Map each entity → dynamic proto row using table’s message descriptor
+	msgs := make([]*dynamicpb.Message, 0, len(batch))
+	for _, e := range batch {
+		m, err := entityToProto(ts.msgDesc, e)
+		if err != nil {
+			return 0, fmt.Errorf("entityToProto: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+
+	// Append with small retry/backoff for transient issues
+	backoff := []time.Duration{100 * time.Millisecond, 300 * time.Millisecond, 800 * time.Millisecond, 1500 * time.Millisecond}
+	var lastErr error
+	for i := 0; i < len(backoff)+1; i++ {
+		encoded := make([][]byte, len(msgs))
+		for i, m := range msgs {
+			b, encErr := proto.Marshal(m)
+			if encErr != nil {
+				lastErr = encErr
+				break
+			}
+			encoded[i] = b
+		}
+		if lastErr == nil {
+			_, err = ts.stream.AppendRows(ctx, encoded)
+		}
+		time.Sleep(backoff[min(i, len(backoff)-1)])
+	}
+	return 0, fmt.Errorf("AppendRows failed: %w", lastErr)
 }
 
 func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {
@@ -404,4 +466,78 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 	}
 
 	return
+}
+
+func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*tableStream, error) {
+	// Fast path: cached
+	db.streamMu.RLock()
+	if ts, ok := db.streamCache[tableName]; ok {
+		db.streamMu.RUnlock()
+		return ts, nil
+	}
+	db.streamMu.RUnlock()
+
+	// Pull live table metadata (schema)
+	tbl := db.client.Dataset(db.dataSet).Table(tableName)
+	md, err := tbl.Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("table metadata for %s: %w", tableName, err)
+	}
+
+	// BigQuery -> Storage schema
+	storageSchema, err := adapt.BQSchemaToStorageTableSchema(md.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("BQSchemaToStorageTableSchema: %w", err)
+	}
+
+	// Storage schema -> proto3 message descriptor (reflect-level)
+	scope := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, tableName)
+	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
+	if err != nil {
+		return nil, fmt.Errorf("StorageSchemaToProto3Descriptor: %w", err)
+	}
+
+	// Ensure it’s a MessageDescriptor and normalize to *descriptorpb.DescriptorProto (required by v1.63.1)
+	msgDesc, ok := desc.(protoreflect.MessageDescriptor)
+	if !ok {
+		return nil, fmt.Errorf("schema descriptor for %s is not a message", tableName)
+	}
+	descriptorProto, err := adapt.NormalizeDescriptor(msgDesc)
+	if err != nil {
+		return nil, fmt.Errorf("NormalizeDescriptor: %w", err)
+	}
+
+	// Destination table resource name
+	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
+
+	// Create the managed stream bound to the table
+	stream, err := db.mw.NewManagedStream(
+		ctx,
+		managedwriter.WithDestinationTable(dest),
+		managedwriter.WithSchemaDescriptor(descriptorProto), // *descriptorpb.DescriptorProto
+	)
+	if err != nil {
+		return nil, fmt.Errorf("NewManagedStream(%s): %w", dest, err)
+	}
+
+	ts := &tableStream{
+		stream:    stream,
+		bqSchema:  md.Schema,
+		msgDesc:   msgDesc,
+		tableFQN:  dest,
+		createdAt: time.Now(),
+	}
+
+	// Cache with race handling
+	db.streamMu.Lock()
+	if cur := db.streamCache[tableName]; cur == nil {
+		db.streamCache[tableName] = ts
+	} else {
+		// Another goroutine won the race; close ours and use the cached one
+		_ = stream.Close()
+		ts = cur
+	}
+	db.streamMu.Unlock()
+
+	return ts, nil
 }

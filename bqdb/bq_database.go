@@ -469,7 +469,7 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 }
 
 func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*tableStream, error) {
-	// Fast path: cached
+	// Fast path: return cached stream if present
 	db.streamMu.RLock()
 	if ts, ok := db.streamCache[tableName]; ok {
 		db.streamMu.RUnlock()
@@ -477,37 +477,45 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 	}
 	db.streamMu.RUnlock()
 
-	// Pull live table metadata (schema)
+	// 1) Read live table metadata (for schema)
 	tbl := db.client.Dataset(db.dataSet).Table(tableName)
 	md, err := tbl.Metadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("table metadata for %s: %w", tableName, err)
 	}
 
-	// BigQuery -> Storage schema
+	// 2) Build proto descriptor from BQ schema
 	storageSchema, err := adapt.BQSchemaToStorageTableSchema(md.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("BQSchemaToStorageTableSchema: %w", err)
 	}
 
-	// Storage schema -> proto3 message descriptor (reflect-level)
+	// IMPORTANT: sanitize scope for proto identifier rules (no dashes, etc.)
 	scope := fmt.Sprintf("%s.%s.%s",
 		protoIdentSafe(db.projectId),
 		protoIdentSafe(db.dataSet),
 		protoIdentSafe(tableName),
 	)
+
 	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
 	if err != nil {
 		return nil, fmt.Errorf("StorageSchemaToProto3Descriptor: %w", err)
 	}
 	msgDesc, ok := desc.(protoreflect.MessageDescriptor)
 	if !ok {
-		return nil, fmt.Errorf("schema descriptor is not a message")
+		return nil, fmt.Errorf("schema descriptor for %s is not a message", tableName)
 	}
+
+	// 3) Destination resource name for the table (THIS is the missing dest)
+	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
+
+	// 4) v1.63.1 requires *descriptorpb.DescriptorProto; NormalizeDescriptor returns that.
 	descriptorProto, err := adapt.NormalizeDescriptor(msgDesc)
 	if err != nil {
 		return nil, fmt.Errorf("NormalizeDescriptor: %w", err)
 	}
+
+	// 5) Open managed stream bound to the table + schema
 	stream, err := db.mw.NewManagedStream(
 		ctx,
 		managedwriter.WithDestinationTable(dest),
@@ -525,12 +533,11 @@ func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*t
 		createdAt: time.Now(),
 	}
 
-	// Cache with race handling
+	// 6) Cache with race protection
 	db.streamMu.Lock()
 	if cur := db.streamCache[tableName]; cur == nil {
 		db.streamCache[tableName] = ts
 	} else {
-		// Another goroutine won the race; close ours and use the cached one
 		_ = stream.Close()
 		ts = cur
 	}

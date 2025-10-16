@@ -227,7 +227,10 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 		}
 		time.Sleep(backoff[min(i, len(backoff)-1)])
 	}
-	return 0, fmt.Errorf("AppendRows failed: %w", lastErr)
+	if lastErr != nil {
+		err = fmt.Errorf("AppendRows failed: %w", lastErr)
+	}
+	return 0, err
 }
 
 func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {

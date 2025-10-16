@@ -199,7 +199,7 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 		return 0, err
 	}
 
-	// Map each entity → dynamic proto row using table’s message descriptor
+	// Build dynamic protos once
 	msgs := make([]*dynamicpb.Message, 0, len(batch))
 	for _, e := range batch {
 		m, err := entityToProto(ts.msgDesc, e)
@@ -209,28 +209,39 @@ func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Ent
 		msgs = append(msgs, m)
 	}
 
-	// Append with small retry/backoff for transient issues
+	// Encode once (so retries don’t re-marshal)
+	encoded := make([][]byte, len(msgs))
+	for j, m := range msgs {
+		b, encErr := proto.Marshal(m)
+		if encErr != nil {
+			return 0, fmt.Errorf("proto.Marshal: %w", encErr)
+		}
+		encoded[j] = b
+	}
+
 	backoff := []time.Duration{100 * time.Millisecond, 300 * time.Millisecond, 800 * time.Millisecond, 1500 * time.Millisecond}
 	var lastErr error
-	for i := 0; i < len(backoff)+1; i++ {
-		encoded := make([][]byte, len(msgs))
-		for i, m := range msgs {
-			b, encErr := proto.Marshal(m)
-			if encErr != nil {
-				lastErr = encErr
-				break
-			}
-			encoded[i] = b
+
+	for attempt := 0; attempt < len(backoff)+1; attempt++ {
+		_, err = ts.stream.AppendRows(ctx, encoded)
+		if err == nil {
+			// SUCCESS: return number of rows written
+			return len(encoded), nil
 		}
-		if lastErr == nil {
-			_, err = ts.stream.AppendRows(ctx, encoded)
+		lastErr = err
+
+		// Respect context; don’t keep retrying on deadline/cancel
+		if ctx.Err() != nil {
+			break
 		}
-		time.Sleep(backoff[min(i, len(backoff)-1)])
+
+		// Sleep only if we will retry again
+		if attempt < len(backoff) {
+			time.Sleep(backoff[attempt])
+		}
 	}
-	if lastErr != nil {
-		err = fmt.Errorf("AppendRows failed: %w", lastErr)
-	}
-	return 0, err
+
+	return 0, fmt.Errorf("AppendRows failed after retries: %w", lastErr)
 }
 
 func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {

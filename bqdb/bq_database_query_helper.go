@@ -1,7 +1,9 @@
 package bqdb
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var functions = map[database.AggFunc]string{
@@ -462,108 +465,52 @@ func getBQTimePeriodSQLOrOriginalFieldName(fieldName string, period entity.TimeP
 	}
 }
 
-func entityToProto(md protoreflect.MessageDescriptor, e entity.Entity) (*dynamicpb.Message, error) {
-	v := reflect.ValueOf(e)
-	if v.Kind() == reflect.Pointer {
-		v = v.Elem()
+// entityToProto builds a dynamic protobuf message according to msgDesc.
+// It converts INT64 epoch-millis -> google.protobuf.Timestamp when the schema requires TIMESTAMP.
+func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dynamicpb.Message, error) {
+	// Marshal to JSON then into a generic map to avoid compile-time deps on app models.
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return nil, fmt.Errorf("marshal entity: %w", err)
 	}
-	if v.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("entity must be a struct or *struct, got %s", v.Kind())
-	}
-
-	// Build map: columnName -> reflect.Value
-	colToVal := make(map[string]reflect.Value, v.NumField())
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		// ignore fields explicitly marked bigquery:"-"
-		if tag := f.Tag.Get("bigquery"); tag == "-" {
-			continue
-		}
-		name := f.Tag.Get("bigquery")
-		if name == "" || name == "," {
-			name = f.Tag.Get("json")
-			if idx := strings.Index(name, ","); idx >= 0 {
-				name = name[:idx]
-			}
-		}
-		if name == "" {
-			name = strings.ToLower(f.Name) // last fallback
-		}
-		colToVal[name] = v.Field(i)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal entity: %w", err)
 	}
 
-	msg := dynamicpb.NewMessage(md)
-	fields := md.Fields()
+	dm := dynamicpb.NewMessage(msgDesc)
+	fields := msgDesc.Fields()
+
 	for i := 0; i < fields.Len(); i++ {
 		fd := fields.Get(i)
-		col := string(fd.Name())
-		rv, ok := colToVal[col]
-		if !ok || !rv.IsValid() {
-			continue // missing field is fine for nullable columns
-		}
+		name := string(fd.Name())
 
-		// nil pointer? skip
-		if rv.Kind() == reflect.Pointer && rv.IsNil() {
+		// Source may use json/bigquery tags with underscores; our JSON keys should match table column names.
+		val, ok := m[name]
+		if !ok || val == nil {
+			// field absent in entity -> leave unset (NULLable / default)
 			continue
 		}
-		if rv.Kind() == reflect.Pointer {
-			rv = rv.Elem()
-		}
 
-		// map basic kinds; extend here if/when schema adds arrays/records
-		switch fd.Kind() {
-		case protoreflect.StringKind:
-			msg.Set(fd, protoreflect.ValueOfString(fmt.Sprintf("%v", rv.Interface())))
-		case protoreflect.BoolKind:
-			var b bool
-			switch rv.Kind() {
-			case reflect.Bool:
-				b = rv.Bool()
-			default:
-				b = fmt.Sprintf("%v", rv.Interface()) == "true"
+		// Handle TIMESTAMP (google.protobuf.Timestamp) specially
+		if fd.Kind() == protoreflect.MessageKind && string(fd.Message().FullName()) == "google.protobuf.Timestamp" {
+			ts, err := toTimestampValue(val)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", name, err)
 			}
-			msg.Set(fd, protoreflect.ValueOfBool(b))
-		case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-			msg.Set(fd, protoreflect.ValueOfInt32(int32(asInt64(rv))))
-		case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-			msg.Set(fd, protoreflect.ValueOfInt64(asInt64(rv)))
-		case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-			msg.Set(fd, protoreflect.ValueOfUint32(uint32(asInt64(rv))))
-		case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-			msg.Set(fd, protoreflect.ValueOfUint64(uint64(asInt64(rv))))
-		case protoreflect.DoubleKind, protoreflect.FloatKind:
-			msg.Set(fd, protoreflect.ValueOfFloat64(asFloat64(rv)))
-		default:
-			// RECORD/ARRAY not handled here; add as needed
+			dm.Set(fd, protoreflect.ValueOfMessage(ts.ProtoReflect()))
+			continue
 		}
-	}
-	return msg, nil
-}
 
-func asInt64(v reflect.Value) int64 {
-	switch v.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int()
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return int64(v.Uint())
-	case reflect.String:
-		if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
-			return n
+		// Fallback: coerce scalar/list/map according to field kind.
+		pv, err := coerceToProtoValue(fd, val)
+		if err != nil {
+			return nil, fmt.Errorf("field %s: %w", name, err)
 		}
+		dm.Set(fd, pv)
 	}
-	return 0
-}
-func asFloat64(v reflect.Value) float64 {
-	switch v.Kind() {
-	case reflect.Float32, reflect.Float64:
-		return v.Float()
-	default:
-		return float64(asInt64(v))
-	}
+
+	return dm, nil
 }
 
 // protoIdentSafe converts an arbitrary string into a valid protobuf identifier:
@@ -587,4 +534,180 @@ func protoIdentSafe(s string) string {
 		out = append([]rune{'p', '_'}, out...)
 	}
 	return string(out)
+}
+
+// toTimestampValue converts a value (expected epoch millis as number or string) to timestamppb.Timestamp.
+func toTimestampValue(v any) (*timestamppb.Timestamp, error) {
+	ms, err := toInt64(v)
+	if err != nil {
+		return nil, fmt.Errorf("timestamp expects epoch millis: %w", err)
+	}
+	// guard rails for valid protobuf timestamp range (~ years 0001..9999)
+	sec := ms / 1000
+	nsec := (ms % 1000) * int64(time.Millisecond)
+	t := time.Unix(sec, nsec).UTC()
+	ts := timestamppb.New(t)
+	if err := ts.CheckValid(); err != nil {
+		return nil, fmt.Errorf("invalid timestamp from ms=%d: %w", ms, err)
+	}
+	return ts, nil
+}
+
+// coerceToProtoValue converts common JSON/native Go values into a protoreflect.Value for fd.
+// Extend as needed for arrays/records/enums; covers the usual scalars you have in FlowRecord.
+func coerceToProtoValue(fd protoreflect.FieldDescriptor, v any) (protoreflect.Value, error) {
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		b, err := toBool(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOfBool(b), nil
+
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		i, err := toInt64(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOfInt32(int32(i)), nil
+
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		i, err := toInt64(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOfInt64(i), nil
+
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		i, err := toInt64(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOfUint32(uint32(i)), nil
+
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		i, err := toInt64(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOfUint64(uint64(i)), nil
+
+	case protoreflect.DoubleKind, protoreflect.FloatKind:
+		f, err := toFloat64(v)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		if fd.Kind() == protoreflect.FloatKind {
+			return protoreflect.ValueOfFloat32(float32(f)), nil
+		}
+		return protoreflect.ValueOfFloat64(f), nil
+
+	case protoreflect.StringKind:
+		return protoreflect.ValueOfString(toString(v)), nil
+
+	case protoreflect.BytesKind:
+		switch b := v.(type) {
+		case []byte:
+			return protoreflect.ValueOfBytes(b), nil
+		case string:
+			return protoreflect.ValueOfBytes([]byte(b)), nil
+		default:
+			return protoreflect.Value{}, fmt.Errorf("bytes: unsupported %T", v)
+		}
+
+	// Lists/records/enums can be added here if present in your schema.
+	default:
+		// If schema defines a field we don't know how to coerce, better fail early.
+		return protoreflect.Value{}, fmt.Errorf("unsupported field kind %v", fd.Kind())
+	}
+}
+
+func toInt64(v any) (int64, error) {
+	switch x := v.(type) {
+	case int64:
+		return x, nil
+	case int:
+		return int64(x), nil
+	case float64:
+		// JSON numbers decode to float64; require integral value
+		if x > math.MaxInt64 || x < math.MinInt64 {
+			return 0, fmt.Errorf("out of int64 range")
+		}
+		return int64(x), nil
+	case json.Number:
+		i, err := strconv.ParseInt(string(x), 10, 64)
+		if err != nil {
+			// try float then cast
+			f, e := strconv.ParseFloat(string(x), 64)
+			if e != nil {
+				return 0, err
+			}
+			return int64(f), nil
+		}
+		return i, nil
+	case string:
+		if x == "" {
+			return 0, fmt.Errorf("empty string")
+		}
+		i, err := strconv.ParseInt(x, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return i, nil
+	default:
+		return 0, fmt.Errorf("cannot convert %T to int64", v)
+	}
+}
+
+func toFloat64(v any) (float64, error) {
+	switch x := v.(type) {
+	case float64:
+		return x, nil
+	case float32:
+		return float64(x), nil
+	case int64:
+		return float64(x), nil
+	case int:
+		return float64(x), nil
+	case json.Number:
+		return strconv.ParseFloat(string(x), 64)
+	case string:
+		return strconv.ParseFloat(x, 64)
+	default:
+		return 0, fmt.Errorf("cannot convert %T to float64", v)
+	}
+}
+
+func toBool(v any) (bool, error) {
+	switch x := v.(type) {
+	case bool:
+		return x, nil
+	case string:
+		switch x {
+		case "true", "1", "t", "yes", "y":
+			return true, nil
+		case "false", "0", "f", "no", "n":
+			return false, nil
+		}
+		return false, fmt.Errorf("invalid bool string %q", x)
+	case float64:
+		return x != 0, nil
+	case int64:
+		return x != 0, nil
+	case int:
+		return x != 0, nil
+	default:
+		return false, fmt.Errorf("cannot convert %T to bool", v)
+	}
+}
+
+func toString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprint(v)
+	}
 }

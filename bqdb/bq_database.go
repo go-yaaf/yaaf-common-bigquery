@@ -12,8 +12,11 @@ import (
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/status"
 
 	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
 	"cloud.google.com/go/bigquery/storage/managedwriter"
 	"cloud.google.com/go/bigquery/storage/managedwriter/adapt"
 	"google.golang.org/protobuf/proto"
@@ -39,6 +42,50 @@ type BqDatabase struct {
 	streamMu    sync.RWMutex
 	mw          *managedwriter.Client
 	streamCache map[string]*tableStream // key: tableName
+}
+
+// --- Storage Write API error decoding helpers ---
+
+// decodeAppendError unwraps gRPC status details to extract row-level errors.
+func decodeAppendError(err error) string {
+	if err == nil {
+		return ""
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err.Error()
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "SWA error: %s\n", st.Message())
+
+	sample := 0
+	const maxSample = 25 // keep output short but useful
+
+	for _, d := range st.Details() {
+		switch t := d.(type) {
+		case *storagepb.RowError:
+			if sample < maxSample {
+				// RowError has: index, code, message
+				fmt.Fprintf(&b, "  row %d: %s (code=%v)\n", t.GetIndex(), t.GetMessage(), t.GetCode())
+				sample++
+			}
+		case *storagepb.StorageError:
+			// High-level storage error (schema mismatch, missing required field, etc.)
+			fmt.Fprintf(&b, "  storage: %s (entity=%v, code=%v)\n", t.GetErrorMessage(), t.GetEntity(), t.GetCode())
+		case *errdetails.BadRequest:
+			for _, v := range t.GetFieldViolations() {
+				if sample < maxSample {
+					fmt.Fprintf(&b, "  bad_request field=%s: %s\n", v.GetField(), v.GetDescription())
+					sample++
+				}
+			}
+		default:
+			// Keep unknown detail types visible
+			fmt.Fprintf(&b, "  detail: %T\n", t)
+		}
+	}
+
+	return b.String()
 }
 
 // NewBqDatabase creates a new BigQuery database connection using a URI.
@@ -178,6 +225,7 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 		cancel()
 
 		if err != nil {
+			decodeAppendError(err)
 			return int64(totalInserted), err
 		}
 

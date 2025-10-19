@@ -473,8 +473,6 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 		return nil, fmt.Errorf("nil entity")
 	}
 
-	fmt.Println(debugProtoField(msgDesc, "flow_id"))
-
 	// Peel pointers to reach a struct
 	rv := reflect.ValueOf(e)
 	for rv.Kind() == reflect.Pointer {
@@ -800,16 +798,4 @@ func toString(v any) string {
 	default:
 		return fmt.Sprint(v)
 	}
-}
-
-// debugProtoField logs the proto field kind and message name (if any).
-func debugProtoField(md protoreflect.MessageDescriptor, name string) string {
-	fd := md.Fields().ByName(protoreflect.Name(name))
-	if fd == nil {
-		return fmt.Sprintf("field %q not found in descriptor", name)
-	}
-	if fd.Kind() == protoreflect.MessageKind {
-		return fmt.Sprintf("field %q -> Kind=%s, Message=%s", name, fd.Kind(), fd.Message().FullName())
-	}
-	return fmt.Sprintf("field %q -> Kind=%s", name, fd.Kind())
 }

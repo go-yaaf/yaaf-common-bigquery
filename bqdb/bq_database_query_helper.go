@@ -513,6 +513,7 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 			continue
 		}
 		// If it’s a Timestamp message, accept time.Time or epoch millis
+		fmt.Printf("%s\n", fd.Message().FullName())
 		if fd.Kind() == protoreflect.MessageKind && string(fd.Message().FullName()) == "google.protobuf.Timestamp" {
 			ms, ok := getMillis(fv.Interface())
 			if !ok {

@@ -514,13 +514,17 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 		}
 		// If it’s a Timestamp message, accept time.Time or epoch millis
 		if fd.Kind() == protoreflect.MessageKind && string(fd.Message().FullName()) == "google.protobuf.Timestamp" {
-			tsMsg, ok, err := toProtoTimestamp(fv.Interface())
-			if err != nil {
-				return nil, fmt.Errorf("field %s: %w", col, err)
+			ms, ok := getMillis(fv.Interface())
+			if !ok {
+				// treat as NULL/absent (field is NOT NULL? BigQuery will error, can see that in row index)
+				continue
 			}
-			if ok {
-				dm.Set(fd, protoreflect.ValueOfMessage(tsMsg.ProtoReflect()))
+			sec, nanos := msToSecNanos(ms)
+			ts := timestamppb.New(time.Unix(sec, int64(nanos)).UTC())
+			if err := ts.CheckValid(); err != nil {
+				return nil, fmt.Errorf("field %s: invalid timestamp from ms=%d: %w", col, ms, err)
 			}
+			dm.Set(fd, protoreflect.ValueOfMessage(ts.ProtoReflect()))
 			continue
 		}
 
@@ -655,6 +659,33 @@ func reflectToProtoValue(fd protoreflect.FieldDescriptor, fv reflect.Value) (pro
 		return protoreflect.ValueOfUint64(uint64(i)), true, nil
 
 	case protoreflect.DoubleKind, protoreflect.FloatKind:
+		// If the target is TIMESTAMP-as-seconds (proto3 DOUBLE), convert ms -> seconds.
+		// We can’t inspect logical types here, so we optimistically convert integers/time.Time as ms.
+		switch fv.Kind() {
+		case reflect.Struct:
+			if fv.Type().PkgPath() == "time" && fv.Type().Name() == "Time" {
+				tt := fv.Interface().(time.Time).UTC()
+				secs := float64(tt.UnixNano()) / 1e9
+				if fd.Kind() == protoreflect.FloatKind {
+					return protoreflect.ValueOfFloat32(float32(secs)), true, nil
+				}
+				return protoreflect.ValueOfFloat64(secs), true, nil
+			}
+		}
+		if isIntLike(fv.Kind()) {
+			// interpret as epoch-ms and convert to seconds with integer math first
+			ms, ok := getMillis(fv.Interface())
+			if ok {
+				sec := ms / 1000
+				rem := ms % 1000
+				secs := float64(sec) + float64(rem)/1000.0
+				if fd.Kind() == protoreflect.FloatKind {
+					return protoreflect.ValueOfFloat32(float32(secs)), true, nil
+				}
+				return protoreflect.ValueOfFloat64(secs), true, nil
+			}
+		}
+		// Fallback: generic float (non-timestamp doubles)
 		f, err := toFloat64(fv.Interface())
 		if err != nil {
 			return protoreflect.Value{}, false, err
@@ -708,6 +739,16 @@ func protoIdentSafe(s string) string {
 		out = append([]rune{'p', '_'}, out...)
 	}
 	return string(out)
+}
+
+func isIntLike(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	default:
+		return false
+	}
 }
 
 func toInt64(v any) (int64, error) {
@@ -797,5 +838,71 @@ func toString(v any) string {
 		return string(x)
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+// msToSecNanos converts epoch milliseconds to (seconds, nanos).
+func msToSecNanos(ms uint64) (sec int64, nanos int32) {
+	sec = int64(ms / 1000)
+	remMs := int64(ms % 1000)
+	nanos = int32(remMs * 1_000_000)
+	return
+}
+
+// msToMicros converts epoch milliseconds to microseconds (int64), with overflow guard.
+func msToMicros(ms uint64) (int64, error) {
+	const max = ^uint64(0) // max uint64
+	// Bound for int64
+	if ms > uint64(math.MaxInt64)/1000 {
+		return 0, fmt.Errorf("timestamp overflows microseconds int64: ms=%d", ms)
+	}
+	return int64(ms * 1000), nil
+}
+
+// getMillis extracts epoch-ms from common numeric/time forms quickly.
+func getMillis(v any) (uint64, bool) {
+	switch x := v.(type) {
+	case uint64:
+		return x, true
+	case *uint64:
+		if x == nil {
+			return 0, false
+		}
+		return *x, true
+	case int64:
+		if x < 0 {
+			return uint64(x), true
+		}
+		return uint64(x), true
+	case *int64:
+		if x == nil {
+			return 0, false
+		}
+		if *x < 0 {
+			return uint64(*x), true
+		}
+		return uint64(*x), true
+	case int, int32, uint, uint32:
+		return uint64(reflect.ValueOf(v).Convert(reflect.TypeOf(uint64(0))).Uint()), true
+	case time.Time:
+		if x.IsZero() {
+			return 0, false
+		}
+		return uint64(x.UnixMilli()), true
+	case *time.Time:
+		if x == nil || x.IsZero() {
+			return 0, false
+		}
+		return uint64(x.UnixMilli()), true
+	default:
+		// Fall back to existing toInt64 if present
+		i, err := toInt64(v)
+		if err != nil {
+			return 0, false
+		}
+		if i < 0 {
+			return uint64(i), true
+		}
+		return uint64(i), true
 	}
 }

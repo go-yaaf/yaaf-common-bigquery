@@ -466,14 +466,13 @@ func getBQTimePeriodSQLOrOriginalFieldName(fieldName string, period entity.TimeP
 }
 
 // entityToProto builds a dynamic protobuf message according to msgDesc using reflection over the entity.
-// Field-name precedence: bigquery tag -> bq tag -> json tag -> snake_case(field name).
-// Special handling: when proto field is google.protobuf.Timestamp, accept either time.Time or epoch-millis (int/uint/float/string).
+// Field-name precedence: bigquery -> bq -> json -> snake_case(FieldName).
+// Supports: scalars, google.protobuf.Timestamp, google.protobuf.*Value wrappers,
+// and explicit casting via struct tag `castTo:"timestamp"` to convert epoch-ms -> BQ TIMESTAMP.
 func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dynamicpb.Message, error) {
 	if e == nil {
 		return nil, fmt.Errorf("nil entity")
 	}
-
-	// Peel pointers to reach a struct
 	rv := reflect.ValueOf(e)
 	for rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
@@ -491,32 +490,74 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 
 	for i := 0; i < rt.NumField(); i++ {
 		sf := rt.Field(i)
-		// Skip unexported fields
 		if sf.PkgPath != "" {
-			continue
+			continue // unexported
 		}
-		// Explicit skip
 		if tag := strings.TrimSpace(sf.Tag.Get("bigquery")); tag == "-" {
 			continue
 		}
-		// Resolve the column (proto field) name
 		col := resolveProtoColumnName(sf)
 		fd := fields.ByName(protoreflect.Name(col))
 		if fd == nil {
-			// Not part of the target schema/descriptor; ignore gracefully
-			continue
+			continue // not in descriptor
 		}
 
 		fv := rv.Field(i)
-		// Handle nil pointers as NULL (skip)
 		if fv.Kind() == reflect.Pointer && fv.IsNil() {
-			continue
+			continue // NULL
 		}
-		// If it’s a Timestamp message, accept time.Time or epoch millis
+
+		// --- castTo hint handling ---
+		switch strings.ToLower(strings.TrimSpace(sf.Tag.Get("castTo"))) {
+		case "timestamp":
+			// Interpret the source value as epoch-milliseconds and write to a TIMESTAMP column.
+			handled, err := setTimestampByCast(dm, fd, col, fv.Interface())
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", col, err)
+			}
+			if handled {
+				continue
+			}
+			// If not handled, fall through to generic mapping (defensive)
+
+		case "int64":
+			i, err := toInt64(fv.Interface())
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", col, err)
+			}
+			switch fd.Kind() {
+			case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+				dm.Set(fd, protoreflect.ValueOfInt64(i))
+				continue
+			case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+				dm.Set(fd, protoreflect.ValueOfUint64(uint64(i)))
+				continue
+			}
+			// else drop to generic
+
+		case "string":
+			s := toString(fv.Interface())
+			if fd.Kind() == protoreflect.StringKind {
+				dm.Set(fd, protoreflect.ValueOfString(s))
+				continue
+			}
+
+		case "boolean", "bool":
+			b, err := toBool(fv.Interface())
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", col, err)
+			}
+			if fd.Kind() == protoreflect.BoolKind {
+				dm.Set(fd, protoreflect.ValueOfBool(b))
+				continue
+			}
+		}
+		// --- end castTo ---
+
+		// Wrapper-aware timestamp (if descriptor is google.protobuf.Timestamp)
 		if fd.Kind() == protoreflect.MessageKind && string(fd.Message().FullName()) == "google.protobuf.Timestamp" {
 			ms, ok := getMillis(fv.Interface())
 			if !ok {
-				// treat as NULL/absent (field is NOT NULL? BigQuery will error, can see that in row index)
 				continue
 			}
 			sec, nanos := msToSecNanos(ms)
@@ -528,7 +569,7 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 			continue
 		}
 
-		// Generic scalar mapping (and bytes)
+		// Generic scalar/wrapper mapping
 		val, ok, err := reflectToProtoValue(fd, fv)
 		if err != nil {
 			return nil, fmt.Errorf("field %s: %w", col, err)
@@ -539,6 +580,60 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 	}
 
 	return dm, nil
+}
+
+// setTimestampByCast writes a TIMESTAMP value from epoch-milliseconds based on the field descriptor encoding.
+// Returns handled=true if the descriptor is a TIMESTAMP (any of the supported encodings) and value was set or skipped as NULL.
+// If the field isn't TIMESTAMP-encoded, returns handled=false,nil so caller can fall back.
+func setTimestampByCast(dm *dynamicpb.Message, fd protoreflect.FieldDescriptor, col string, src any) (handled bool, err error) {
+	ms, ok := getMillis(src) // always epoch-ms in your models
+	if !ok {
+		return true, nil // treat as NULL/absent
+	}
+
+	switch fd.Kind() {
+	case protoreflect.MessageKind:
+		if string(fd.Message().FullName()) != "google.protobuf.Timestamp" {
+			return false, nil // not a timestamp message; let caller fallback
+		}
+		sec, nanos := msToSecNanos(ms)
+		ts := timestamppb.New(time.Unix(sec, int64(nanos)).UTC())
+		if err := ts.CheckValid(); err != nil {
+			return true, fmt.Errorf("invalid timestamp ms=%d: %w", ms, err)
+		}
+		dm.Set(fd, protoreflect.ValueOfMessage(ts.ProtoReflect()))
+		return true, nil
+
+	case protoreflect.DoubleKind, protoreflect.FloatKind:
+		// TIMESTAMP-as-seconds float (common in proto3)
+		sec := ms / 1000
+		rem := ms % 1000
+		secs := float64(sec) + float64(rem)/1000.0
+		if fd.Kind() == protoreflect.FloatKind {
+			dm.Set(fd, protoreflect.ValueOfFloat32(float32(secs)))
+		} else {
+			dm.Set(fd, protoreflect.ValueOfFloat64(secs))
+		}
+		return true, nil
+
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		// TIMESTAMP-as-microseconds (this is what your current table exposes)
+		us, err := msToMicrosInt64(ms)
+		if err != nil {
+			return true, err
+		}
+		dm.Set(fd, protoreflect.ValueOfInt64(us))
+		return true, nil
+	}
+
+	// Not a recognized TIMESTAMP encoding
+	return false, nil
+}
+func msToMicrosInt64(ms uint64) (int64, error) {
+	if ms > uint64(math.MaxInt64)/1000 {
+		return 0, fmt.Errorf("timestamp overflows int64 microseconds: %d ms", ms)
+	}
+	return int64(ms * 1000), nil
 }
 
 // resolveProtoColumnName picks the outgoing column/field name by tag precedence.
@@ -567,48 +662,6 @@ func toSnakeCase(s string) string {
 		b.WriteRune(r)
 	}
 	return strings.ToLower(b.String())
-}
-
-// toProtoTimestamp accepts either time.Time or epoch-millis (int/uint/float/string) and returns a timestamppb.
-// ok=false means "treat as NULL/absent".
-func toProtoTimestamp(v any) (*timestamppb.Timestamp, bool, error) {
-	if v == nil {
-		return nil, false, nil
-	}
-	switch x := v.(type) {
-	case time.Time:
-		if x.IsZero() {
-			return nil, false, nil
-		}
-		ts := timestamppb.New(x.UTC())
-		if err := ts.CheckValid(); err != nil {
-			return nil, false, err
-		}
-		return ts, true, nil
-	case *time.Time:
-		if x == nil || x.IsZero() {
-			return nil, false, nil
-		}
-		ts := timestamppb.New(x.UTC())
-		if err := ts.CheckValid(); err != nil {
-			return nil, false, err
-		}
-		return ts, true, nil
-	default:
-		// Attempt epoch-millis via existing helpers
-		ms, err := toInt64(v)
-		if err != nil {
-			return nil, false, fmt.Errorf("expect time.Time or epoch-millis: %w", err)
-		}
-		sec := ms / 1000
-		nsec := (ms % 1000) * int64(time.Millisecond)
-		t := time.Unix(sec, nsec).UTC()
-		ts := timestamppb.New(t)
-		if err := ts.CheckValid(); err != nil {
-			return nil, false, err
-		}
-		return ts, true, nil
-	}
 }
 
 // reflectToProtoValue converts a reflect.Value into a protoreflect.Value according to fd.
@@ -847,16 +900,6 @@ func msToSecNanos(ms uint64) (sec int64, nanos int32) {
 	remMs := int64(ms % 1000)
 	nanos = int32(remMs * 1_000_000)
 	return
-}
-
-// msToMicros converts epoch milliseconds to microseconds (int64), with overflow guard.
-func msToMicros(ms uint64) (int64, error) {
-	const max = ^uint64(0) // max uint64
-	// Bound for int64
-	if ms > uint64(math.MaxInt64)/1000 {
-		return 0, fmt.Errorf("timestamp overflows microseconds int64: ms=%d", ms)
-	}
-	return int64(ms * 1000), nil
 }
 
 // getMillis extracts epoch-ms from common numeric/time forms quickly.

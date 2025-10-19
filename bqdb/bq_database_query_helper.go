@@ -472,6 +472,9 @@ func entityToProto(msgDesc protoreflect.MessageDescriptor, e entity.Entity) (*dy
 	if e == nil {
 		return nil, fmt.Errorf("nil entity")
 	}
+
+	fmt.Println(debugProtoField(msgDesc, "flow_id"))
+
 	// Peel pointers to reach a struct
 	rv := reflect.ValueOf(e)
 	for rv.Kind() == reflect.Pointer {
@@ -607,7 +610,7 @@ func toProtoTimestamp(v any) (*timestamppb.Timestamp, bool, error) {
 }
 
 // reflectToProtoValue converts a reflect.Value into a protoreflect.Value according to fd.
-// ok=false means "skip" (e.g., nil ptr). Uses the existing numeric/string/boolean coercers already defined in this file.
+// ok=false means "skip" (e.g., nil ptr). Uses the existing numeric/string/boolean coercers in this file.
 func reflectToProtoValue(fd protoreflect.FieldDescriptor, fv reflect.Value) (protoreflect.Value, bool, error) {
 	// Unwrap pointers
 	for fv.Kind() == reflect.Pointer {
@@ -797,4 +800,16 @@ func toString(v any) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+// debugProtoField logs the proto field kind and message name (if any).
+func debugProtoField(md protoreflect.MessageDescriptor, name string) string {
+	fd := md.Fields().ByName(protoreflect.Name(name))
+	if fd == nil {
+		return fmt.Sprintf("field %q not found in descriptor", name)
+	}
+	if fd.Kind() == protoreflect.MessageKind {
+		return fmt.Sprintf("field %q -> Kind=%s, Message=%s", name, fd.Kind(), fd.Message().FullName())
+	}
+	return fmt.Sprintf("field %q -> Kind=%s", name, fd.Kind())
 }

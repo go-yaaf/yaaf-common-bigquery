@@ -1,7 +1,9 @@
 package bqdb
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -216,12 +218,21 @@ func (s *bqDatabaseQuery) buildFilter(qf database.QueryFilter) (sqlPart string) 
 	}
 
 	// Helper function to handle formatting based on the field type
-	formatValue := func(value interface{}) string {
+	formatValue := func(value any) string {
+		//checck for db type first
+		if fieldType.dbType != "" {
+			switch fieldType.dbType {
+			case "timestamp":
+				return fmt.Sprintf("TIMESTAMP_MILLIS(%v)", value)
+			}
+		}
+		//then fallback to Go's types
 		if fieldType.goType == reflect.String {
 			return fmt.Sprintf("'%v'", value) // Use quotes for strings
 		} else {
 			return fmt.Sprintf("%v", value) // No quotes for numeric types
 		}
+
 	}
 
 	switch operator {
@@ -259,11 +270,12 @@ func (s *bqDatabaseQuery) buildListForFilter(qf database.QueryFilter) string {
 
 	for _, val := range qf.GetValues() {
 		t := reflect.TypeOf(val).Kind()
-		if t == reflect.Slice {
+		switch t {
+		case reflect.Slice:
 			items = formatSlice(toAnySlice(val))
-		} else if t == reflect.String {
+		case reflect.String:
 			items = fmt.Sprintf("%s,'%s' ", items, val)
-		} else {
+		default:
 			items = fmt.Sprintf("%s,'%d' ", items, val)
 		}
 	}
@@ -439,30 +451,25 @@ func buildAnalyticFieldsdMap(entity entity.Entity) AnalyticFielsdMap {
 
 // Function to return the corresponding BigQuery SQL transformation
 func getBQTimePeriodSQLOrOriginalFieldName(fieldName string, period entity.TimePeriodCode) string {
-	// Milliseconds in each time unit
-	const (
-		MinuteMillis = 60 * 1000
-		HourMillis   = 60 * MinuteMillis
-		DayMillis    = 24 * HourMillis
-		WeekMillis   = 7 * DayMillis
-	)
+
+	part := ""
 	switch period {
 	case entity.TimePeriodCodes.MINUTE:
-		return fmt.Sprintf("start_time - MOD(start_time, %d)", MinuteMillis)
+		part = "MINUTE"
 	case entity.TimePeriodCodes.HOUR:
-		return fmt.Sprintf("start_time - MOD(start_time, %d)", HourMillis)
+		part = "HOUR"
 	case entity.TimePeriodCodes.DAY:
-		return fmt.Sprintf("start_time - MOD(start_time, %d)", DayMillis)
+		part = "DAY"
 	case entity.TimePeriodCodes.WEEK:
-		return fmt.Sprintf("start_time - MOD(start_time, %d)", WeekMillis)
-	//case entity.TimePeriodCodes.MONTH:
-	// MONTH calculation is more complex due to varying month lengths; consider using TIMESTAMP_TRUNC for month.
-	///	return "TIMESTAMP_TRUNC(TIMESTAMP_MILLIS(start_time), MONTH)"
 
+		part = "WEEK(MONDAY)"
+	case entity.TimePeriodCodes.MONTH:
+		part = "MONTH"
 	default:
-		//TODO ignore error of unknown TimePeriod code and return original field name
+		// Unknown code → return the original field (no bucketing)
 		return fieldName
 	}
+	return fmt.Sprintf("TIMESTAMP_TRUNC(%s, %s)", fieldName, part)
 }
 
 // entityToProto builds a dynamic protobuf message according to msgDesc using reflection over the entity.
@@ -948,4 +955,28 @@ func getMillis(v any) (uint64, bool) {
 		}
 		return uint64(i), true
 	}
+}
+
+// withBackoff executes fn with simple exponential backoff on transient failures.
+// Treats context errors as final.
+func withBackoff(ctx context.Context, attempts int, baseDelay time.Duration, fn func(context.Context) error) error {
+	delay := baseDelay
+	for try := 1; try <= attempts; try++ {
+		if err := fn(ctx); err != nil {
+			// If context is done, or last attempt, return.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || try == attempts {
+				return err
+			}
+			// Backoff then retry.
+			select {
+			case <-time.After(delay):
+				delay *= 2
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	return nil
 }

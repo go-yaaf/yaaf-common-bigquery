@@ -373,52 +373,97 @@ func (db *BqDatabase) PurgeTable(table string) error {
 	return fmt.Errorf("PurgeTable is not supported in BigQuery")
 }
 
-// ExecuteDDL tailored for CREATE_IF_NOT_EXIST sharded
-// flow-record table.
+// ExecuteDDL creates one flow data table and its materialized views for a given shard.
+// It expects ddl to contain:
+// - "shardKey": exactly one element (the stream/shard id)
+// - "name": base object names; name[0] is the flow table base name, name[i>0] are MV base names
+// - "sql": DDL templates aligned 1:1 with "name". sql[0] must have one %s for the table FQN;
+// each MV sql[i>0] must have two %s: first for the MV FQN, second for the base table FQN.
+// The physical object names are formed as "<base>-<shardKey>", and FQNs are
+// project.dataset.object. The function is idempotent if templates use
+// "IF NOT EXISTS" clause.
 func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
 
-	shardKey := ddl["shardKey"][0]
-	sql := ddl["sql"][0]
-	tableName := ddl["tableName"][0]
+	// ---- Validate inputs
+	get := func(k string) ([]string, bool) { v, ok := ddl[k]; return v, ok }
 
-	tableId := fmt.Sprintf("%s-%s", tableName, shardKey)
-	tableFullQualifyingName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, tableId)
-	// Reference the dataset and table
-	dataset := db.client.Dataset(db.dataSet)
-	table := dataset.Table(tableId)
+	shardVals, ok := get("shardKey")
+	if !ok || len(shardVals) != 1 || shardVals[0] == "" {
+		return fmt.Errorf(`ExecuteDDL: "shardKey" must contain exactly one non-empty value`)
+	}
+	shardKey := shardVals[0]
 
-	// Check if the table exists
-	_, err := table.Metadata(context.Background())
-	if err == nil {
-		// Table already exists, no need to create
-		return nil
-	} else {
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return fmt.Errorf("failed to check if table %s exists: %v", tableId, err)
+	names, ok := get("name")
+	if !ok || len(names) == 0 {
+		return fmt.Errorf(`ExecuteDDL: "name" must be present and non-empty`)
+	}
+	sqls, ok := get("sql")
+	if !ok || len(sqls) == 0 {
+		return fmt.Errorf(`ExecuteDDL: "sql" must be present and non-empty`)
+	}
+	if len(names) != len(sqls) {
+		return fmt.Errorf(`ExecuteDDL: len("name") (%d) != len("sql") (%d)`, len(names), len(sqls))
+	}
+
+	// ---- Helpers
+	quoteFQN := func(obj string) string {
+		return fmt.Sprintf("`%s.%s.%s`", db.projectId, db.dataSet, obj)
+	}
+	physicalName := func(base string) string {
+		return fmt.Sprintf("%s-%s", base, shardKey)
+	}
+
+	runDDL := func(ctx context.Context, stmt string) error {
+		q := db.client.Query(stmt)
+		job, err := q.Run(ctx)
+		if err != nil {
+			return err
+		}
+		status, err := job.Wait(ctx)
+		if err != nil {
+			return err
+		}
+		return status.Err()
+	}
+
+	// Entire operation deadline; short per-statement retries inside.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// ---- 1) Create base flow data table (names[0], sqls[0]) ----
+	tablePhys := physicalName(names[0])
+	tableFQN := quoteFQN(tablePhys)
+
+	// Expect exactly one %s in the table template.
+	stmt := fmt.Sprintf(sqls[0], tableFQN)
+
+	// Retry transient errors up to 3 times with backoff.
+	if err := withBackoff(ctx, 3, 500*time.Millisecond, func(c context.Context) error {
+		return runDDL(c, stmt)
+	}); err != nil {
+		return fmt.Errorf("ExecuteDDL: creating table %s failed: %w", tableFQN, err)
+	}
+
+	// ---- 2) Create each MV over the base table ----
+	for i := 1; i < len(names); i++ {
+		mvPhys := physicalName(names[i])
+		mvFQN := quoteFQN(mvPhys)
+
+		// MV template must accept MV FQN then base table FQN (two %s).
+		mvStmt := fmt.Sprintf(sqls[i], mvFQN, tableFQN)
+
+		if err := withBackoff(ctx, 3, 500*time.Millisecond, func(c context.Context) error {
+			return runDDL(c, mvStmt)
+		}); err != nil {
+			return fmt.Errorf("ExecuteDDL: creating MV %s failed: %w", mvFQN, err)
 		}
 	}
+	return nil
+}
 
-	sql = fmt.Sprintf(sql, fmt.Sprintf("`%s`", tableFullQualifyingName))
-
-	// Run the query
-	query := db.client.Query(sql)
-	job, err := query.Run(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to execute query: %v", err)
-	}
-
-	// Wait for the query to complete
-	status, err := job.Wait(context.Background())
-	if err != nil {
-		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
-	}
-
-	if err := status.Err(); err != nil {
-		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
-	}
+func (db *BqDatabase) createMView(mvName, srcTableName, sql string) error {
 
 	return nil
-
 }
 
 // ExecuteSQL runs a parameterized SQL query on BigQuery and returns the number of affected rows.

@@ -16,6 +16,16 @@ func TestBQBulkInsert(t *testing.T) {
 	os.Setenv("BQ_BATCH_SIZE", "5000")
 	os.Setenv("BQ_BATCH_TIMEOUT", "15")
 
+	/* 	ddl := map[string][]string{
+	   		"tn":    {"flow"},
+	   		"sql":   {"select...."},
+	   		"shard": {"etecnic"},
+	   	}
+
+	   	mv := ddl["mv"]
+
+	   	fmt.Print(mv) */
+
 	bqdb, err := bigquerydb.NewBqDatabase("bq://shieldiot-staging:pulseiot")
 
 	if err != nil {

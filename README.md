@@ -1,5 +1,13 @@
 # Go-YAAF Google BigQuery Middleware
 
+![Project status](https://img.shields.io/badge/version-1.2-green.svg)
+[![Build](https://github.com/go-yaaf/yaaf-common-bigquery/actions/workflows/build.yml/badge.svg)](https://github.com/go-yaaf/yaaf-common-bigquery/actions/workflows/build.yml)
+[![Coverage Status](https://coveralls.io/repos/go-yaaf/yaaf-common-bigquery/badge.svg?branch=main&service=github)](https://coveralls.io/github/go-yaaf/yaaf-common-bigquery?branch=main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/go-yaaf/yaaf-common-bigquery)](https://goreportcard.com/report/github.com/go-yaaf/yaaf-common-bigquery)
+[![GoDoc](https://godoc.org/github.com/go-yaaf/yaaf-common-bigquery?status.svg)](https://pkg.go.dev/github.com/go-yaaf/yaaf-common-bigquery)
+![License](https://img.shields.io/dub/l/vibe-d.svg)
+
+## Overview
 This library is a BigQuery adapter for the `go-yaaf/yaaf-common` database interface. It provides a convenient and fluent API for interacting with Google BigQuery, allowing developers to easily build and execute complex queries, perform bulk data operations, and manage database schema.
 
 ## Features

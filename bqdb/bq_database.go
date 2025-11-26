@@ -5,20 +5,87 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
-	"cloud.google.com/go/bigquery"
 	"github.com/go-yaaf/yaaf-common/config"
 	"github.com/go-yaaf/yaaf-common/database"
 	"github.com/go-yaaf/yaaf-common/entity"
 	"google.golang.org/api/iterator"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/status"
+
+	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
+	"cloud.google.com/go/bigquery/storage/managedwriter"
+	"cloud.google.com/go/bigquery/storage/managedwriter/adapt"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+type tableStream struct {
+	stream    *managedwriter.ManagedStream
+	bqSchema  bigquery.Schema
+	msgDesc   protoreflect.MessageDescriptor
+	tableFQN  string // projects/{p}/datasets/{d}/tables/{t}
+	createdAt time.Time
+}
 
 // BqDatabase struct implementing IDatabase for BigQuery
 type BqDatabase struct {
 	client *bigquery.Client
 	projectId,
 	dataSet string
+
+	// SWA client + per-table streams (lazy-init and cached).
+	streamMu    sync.RWMutex
+	mw          *managedwriter.Client
+	streamCache map[string]*tableStream // key: tableName
+}
+
+// --- Storage Write API error decoding helpers ---
+
+// decodeAppendError unwraps gRPC status details to extract row-level errors.
+func decodeAppendError(err error) string {
+	if err == nil {
+		return ""
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err.Error()
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "SWA error: %s\n", st.Message())
+
+	sample := 0
+	const maxSample = 25 // keep output short but useful
+
+	for _, d := range st.Details() {
+		switch t := d.(type) {
+		case *storagepb.RowError:
+			if sample < maxSample {
+				// RowError has: index, code, message
+				fmt.Fprintf(&b, "  row %d: %s (code=%v)\n", t.GetIndex(), t.GetMessage(), t.GetCode())
+				sample++
+			}
+		case *storagepb.StorageError:
+			// High-level storage error (schema mismatch, missing required field, etc.)
+			fmt.Fprintf(&b, "  storage: %s (entity=%v, code=%v)\n", t.GetErrorMessage(), t.GetEntity(), t.GetCode())
+		case *errdetails.BadRequest:
+			for _, v := range t.GetFieldViolations() {
+				if sample < maxSample {
+					fmt.Fprintf(&b, "  bad_request field=%s: %s\n", v.GetField(), v.GetDescription())
+					sample++
+				}
+			}
+		default:
+			// Keep unknown detail types visible
+			fmt.Fprintf(&b, "  detail: %T\n", t)
+		}
+	}
+
+	return b.String()
 }
 
 // NewBqDatabase creates a new BigQuery database connection using a URI.
@@ -35,42 +102,56 @@ type BqDatabase struct {
 // Returns:
 // - A new instance of the BqDatabase struct implementing the database.IDatabase interface.
 // - An error if the URI format is invalid or the BigQuery client creation fails.
-func NewBqDatabase(uri string) (database.IDatabase, error) {
-	// Validate URI schema
+func NewBqDatabase(uri string) (*BqDatabase, error) {
 	const schemaPrefix = "bq://"
 	if !strings.HasPrefix(uri, schemaPrefix) {
-		return nil, errors.New("invalid URI: schema must be 'bq'")
+		return nil, fmt.Errorf("invalid URI: must start with %q", schemaPrefix)
 	}
-
-	// Extract project ID and dataset name
-	trimmedURI := strings.TrimPrefix(uri, schemaPrefix)
-	parts := strings.Split(trimmedURI, ":")
-	if len(parts) != 2 {
-		return nil, errors.New("invalid URI format: must be 'bq://projectId:datasetName'")
+	trimmed := strings.TrimPrefix(uri, schemaPrefix)
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("invalid URI format; expected bq://<project>:<dataset>")
 	}
+	projectID, dataset := parts[0], parts[1]
 
-	projectId := parts[0]
-	dataSet := parts[1]
-
-	// Validate extracted values
-	if projectId == "" || dataSet == "" {
-		return nil, errors.New("invalid URI: projectId or datasetName is empty")
-	}
-
-	// Create BigQuery client
 	ctx := context.Background()
-	client, err := bigquery.NewClient(ctx, projectId)
+
+	// BigQuery data client
+	bqClient, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create BigQuery client: %v", err)
+		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
 
-	// Return BqDatabase instance
-	return &BqDatabase{client: client, dataSet: dataSet, projectId: projectId}, nil
+	// Storage Write API client (eagerly initialized here)
+	mwClient, err := managedwriter.NewClient(ctx, projectID)
+	if err != nil {
+		_ = bqClient.Close()
+		return nil, fmt.Errorf("managedwriter.NewClient: %w", err)
+	}
+
+	return &BqDatabase{
+		client:      bqClient,
+		projectId:   projectID,
+		dataSet:     dataset,
+		mw:          mwClient,
+		streamCache: make(map[string]*tableStream),
+	}, nil
 }
 
 // Close Closer includes method Close()
 func (db *BqDatabase) Close() error {
-	return db.client.Close()
+	var firstErr error
+	if db.mw != nil {
+		if err := db.mw.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if db.client != nil {
+		if err := db.client.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // Ping tests BigQuery connectivity (not really needed for BigQuery, stub)
@@ -144,6 +225,7 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 		cancel()
 
 		if err != nil {
+			decodeAppendError(err)
 			return int64(totalInserted), err
 		}
 
@@ -154,18 +236,81 @@ func (db *BqDatabase) BulkInsert(entities []entity.Entity) (int64, error) {
 	return int64(totalInserted), nil
 }
 
-func (db *BqDatabase) bulkInsertInternal(ctx context.Context, entities []entity.Entity) (int, error) {
-	if len(entities) == 0 {
+func (db *BqDatabase) bulkInsertInternal(ctx context.Context, batch []entity.Entity) (int, error) {
+	if len(batch) == 0 {
 		return 0, nil
 	}
+	table := batch[0].TABLE()
 
-	inserter := db.client.Dataset(db.dataSet).Table(entities[0].TABLE()).Inserter()
-	// Insert the records
-	if err := inserter.Put(ctx, entities); err != nil {
+	ts, err := db.getOrInitStream(context.Background(), table)
+	if err != nil {
 		return 0, err
 	}
 
-	return len(entities), nil
+	// Build proto messages (reflection → dynamicpb)
+	msgs := make([]*dynamicpb.Message, 0, len(batch))
+	for _, e := range batch {
+		m, err := entityToProto(ts.msgDesc, e)
+		if err != nil {
+			return 0, fmt.Errorf("entityToProto: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+
+	// Marshal once
+	encoded := make([][]byte, len(msgs))
+	for i, m := range msgs {
+		b, encErr := proto.Marshal(m)
+		if encErr != nil {
+			return 0, fmt.Errorf("proto.Marshal: %w", encErr)
+		}
+		encoded[i] = b
+	}
+
+	// Retry policy
+	backoff := []time.Duration{100 * time.Millisecond, 300 * time.Millisecond, 800 * time.Millisecond, 1500 * time.Millisecond}
+	var lastErr error
+
+	// Helper: build a wait context a bit longer than submit ctx
+	buildWaitCtx := func() (context.Context, context.CancelFunc) {
+		// If caller gave   a deadline, add a small buffer; otherwise cap at 30s.
+		if dl, ok := ctx.Deadline(); ok {
+			remain := time.Until(dl)
+			// Give GetResult a little more than the submit path (min 2s, max 30s).
+			d := max(min(remain+2*time.Second, 30*time.Second), 2*time.Second)
+			return context.WithTimeout(context.Background(), d)
+		}
+		return context.WithTimeout(context.Background(), 30*time.Second)
+	}
+
+	for attempt := 0; attempt < len(backoff)+1; attempt++ {
+		// Submit append using caller's ctx (respects   per-batch timeout)
+		res, err := ts.stream.AppendRows(ctx, encoded)
+		if err == nil {
+			// Wait for server ack with a slightly longer context
+			waitCtx, cancel := buildWaitCtx()
+			_, gerr := res.GetResult(waitCtx)
+			cancel()
+			if gerr == nil {
+				return len(encoded), nil // SUCCESS
+			}
+			err = gerr
+		}
+
+		// Failure path
+		lastErr = err
+
+		// If caller's ctx is done, don't spin
+		if ctx.Err() != nil {
+			break
+		}
+		// Sleep only if another attempt remains
+		if attempt < len(backoff) {
+			time.Sleep(backoff[attempt])
+		}
+	}
+
+	return 0, fmt.Errorf("AppendRows/GetResult failed after retries: %w", lastErr)
 }
 
 func (db *BqDatabase) BulkUpdate(entities []entity.Entity) (int64, error) {
@@ -228,52 +373,97 @@ func (db *BqDatabase) PurgeTable(table string) error {
 	return fmt.Errorf("PurgeTable is not supported in BigQuery")
 }
 
-// ExecuteDDL tailored for CREATE_IF_NOT_EXIST sharded
-// flow-record table.
+// ExecuteDDL creates one flow data table and its materialized views for a given shard.
+// It expects ddl to contain:
+// - "shardKey": exactly one element (the stream/shard id)
+// - "name": base object names; name[0] is the flow table base name, name[i>0] are MV base names
+// - "sql": DDL templates aligned 1:1 with "name". sql[0] must have one %s for the table FQN;
+// each MV sql[i>0] must have two %s: first for the MV FQN, second for the base table FQN.
+// The physical object names are formed as "<base>-<shardKey>", and FQNs are
+// project.dataset.object. The function is idempotent if templates use
+// "IF NOT EXISTS" clause.
 func (db *BqDatabase) ExecuteDDL(ddl map[string][]string) error {
 
-	shardKey := ddl["shardKey"][0]
-	sql := ddl["sql"][0]
-	tableName := ddl["tableName"][0]
+	// ---- Validate inputs
+	get := func(k string) ([]string, bool) { v, ok := ddl[k]; return v, ok }
 
-	tableId := fmt.Sprintf("%s-%s", tableName, shardKey)
-	tableFullQualifyingName := fmt.Sprintf("%s.%s.%s", db.projectId, db.dataSet, tableId)
-	// Reference the dataset and table
-	dataset := db.client.Dataset(db.dataSet)
-	table := dataset.Table(tableId)
+	shardVals, ok := get("shardKey")
+	if !ok || len(shardVals) != 1 || shardVals[0] == "" {
+		return fmt.Errorf(`ExecuteDDL: "shardKey" must contain exactly one non-empty value`)
+	}
+	shardKey := shardVals[0]
 
-	// Check if the table exists
-	_, err := table.Metadata(context.Background())
-	if err == nil {
-		// Table already exists, no need to create
-		return nil
-	} else {
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return fmt.Errorf("failed to check if table %s exists: %v", tableId, err)
+	names, ok := get("name")
+	if !ok || len(names) == 0 {
+		return fmt.Errorf(`ExecuteDDL: "name" must be present and non-empty`)
+	}
+	sqls, ok := get("sql")
+	if !ok || len(sqls) == 0 {
+		return fmt.Errorf(`ExecuteDDL: "sql" must be present and non-empty`)
+	}
+	if len(names) != len(sqls) {
+		return fmt.Errorf(`ExecuteDDL: len("name") (%d) != len("sql") (%d)`, len(names), len(sqls))
+	}
+
+	// ---- Helpers
+	quoteFQN := func(obj string) string {
+		return fmt.Sprintf("`%s.%s.%s`", db.projectId, db.dataSet, obj)
+	}
+	physicalName := func(base string) string {
+		return fmt.Sprintf("%s-%s", base, shardKey)
+	}
+
+	runDDL := func(ctx context.Context, stmt string) error {
+		q := db.client.Query(stmt)
+		job, err := q.Run(ctx)
+		if err != nil {
+			return err
+		}
+		status, err := job.Wait(ctx)
+		if err != nil {
+			return err
+		}
+		return status.Err()
+	}
+
+	// Entire operation deadline; short per-statement retries inside.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// ---- 1) Create base flow data table (names[0], sqls[0]) ----
+	tablePhys := physicalName(names[0])
+	tableFQN := quoteFQN(tablePhys)
+
+	// Expect exactly one %s in the table template.
+	stmt := fmt.Sprintf(sqls[0], tableFQN)
+
+	// Retry transient errors up to 3 times with backoff.
+	if err := withBackoff(ctx, 3, 500*time.Millisecond, func(c context.Context) error {
+		return runDDL(c, stmt)
+	}); err != nil {
+		return fmt.Errorf("ExecuteDDL: creating table %s failed: %w", tableFQN, err)
+	}
+
+	// ---- 2) Create each MV over the base table ----
+	for i := 1; i < len(names); i++ {
+		mvPhys := physicalName(names[i])
+		mvFQN := quoteFQN(mvPhys)
+
+		// MV template must accept MV FQN then base table FQN (two %s).
+		mvStmt := fmt.Sprintf(sqls[i], mvFQN, tableFQN)
+
+		if err := withBackoff(ctx, 3, 500*time.Millisecond, func(c context.Context) error {
+			return runDDL(c, mvStmt)
+		}); err != nil {
+			return fmt.Errorf("ExecuteDDL: creating MV %s failed: %w", mvFQN, err)
 		}
 	}
+	return nil
+}
 
-	sql = fmt.Sprintf(sql, fmt.Sprintf("`%s`", tableFullQualifyingName))
-
-	// Run the query
-	query := db.client.Query(sql)
-	job, err := query.Run(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to execute query: %v", err)
-	}
-
-	// Wait for the query to complete
-	status, err := job.Wait(context.Background())
-	if err != nil {
-		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
-	}
-
-	if err := status.Err(); err != nil {
-		return fmt.Errorf("create flow data table %s failed with error %v", tableId, err)
-	}
+func (db *BqDatabase) createMView(mvName, srcTableName, sql string) error {
 
 	return nil
-
 }
 
 // ExecuteSQL runs a parameterized SQL query on BigQuery and returns the number of affected rows.
@@ -404,4 +594,74 @@ func (db *BqDatabase) ExecuteQuery(source, sql string, args ...any) (results []e
 	}
 
 	return
+}
+
+func (db *BqDatabase) getOrInitStream(ctx context.Context, tableName string) (*tableStream, error) {
+	// Fast path: cached
+	db.streamMu.RLock()
+	if ts, ok := db.streamCache[tableName]; ok {
+		db.streamMu.RUnlock()
+		return ts, nil
+	}
+	db.streamMu.RUnlock()
+
+	// Use caller ctx for quick metadata (fine if this times out)
+	tbl := db.client.Dataset(db.dataSet).Table(tableName)
+	md, err := tbl.Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("table metadata for %s: %w", tableName, err)
+	}
+
+	storageSchema, err := adapt.BQSchemaToStorageTableSchema(md.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("BQSchemaToStorageTableSchema: %w", err)
+	}
+
+	// Flat, proto-safe scope (no dots, no dashes)
+	scope := protoIdentSafe(fmt.Sprintf("%s_%s_%s", db.projectId, db.dataSet, tableName))
+	desc, err := adapt.StorageSchemaToProto3Descriptor(storageSchema, scope)
+	if err != nil {
+		return nil, fmt.Errorf("StorageSchemaToProto3Descriptor: %w", err)
+	}
+	msgDesc, ok := desc.(protoreflect.MessageDescriptor)
+	if !ok {
+		return nil, fmt.Errorf("schema descriptor for %s is not a message", tableName)
+	}
+	descriptorProto, err := adapt.NormalizeDescriptor(msgDesc)
+	if err != nil {
+		return nil, fmt.Errorf("NormalizeDescriptor: %w", err)
+	}
+
+	// IMPORTANT: create the stream with a long-lived context, not the batch ctx.
+	// Otherwise the cached stream becomes permanently canceled after the first batch.
+	dest := fmt.Sprintf("projects/%s/datasets/%s/tables/%s", db.projectId, db.dataSet, tableName)
+	stream, err := db.mw.NewManagedStream(
+		context.Background(),
+		managedwriter.WithDestinationTable(dest),
+		managedwriter.WithSchemaDescriptor(descriptorProto),
+		// Optional safety: serialize inflight requests for  strict one-at-a-time
+		//managedwriter.WithMaxInflightRequests(1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("NewManagedStream(%s): %w", dest, err)
+	}
+
+	ts := &tableStream{
+		stream:    stream,
+		bqSchema:  md.Schema,
+		msgDesc:   msgDesc,
+		tableFQN:  dest,
+		createdAt: time.Now(),
+	}
+
+	db.streamMu.Lock()
+	if cur := db.streamCache[tableName]; cur == nil {
+		db.streamCache[tableName] = ts
+	} else {
+		_ = stream.Close()
+		ts = cur
+	}
+	db.streamMu.Unlock()
+
+	return ts, nil
 }

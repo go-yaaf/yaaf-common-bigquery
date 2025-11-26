@@ -577,6 +577,7 @@ func mapToStruct(m map[string]bigquery.Value, output interface{}) error {
 		// Set the value based on the field type
 		if field.CanSet() {
 			switch field.Kind() {
+
 			case reflect.Int, reflect.Int64:
 				// Handle int and int64 types
 				if v, ok := mapValue.(int64); ok {
@@ -587,6 +588,9 @@ func mapToStruct(m map[string]bigquery.Value, output interface{}) error {
 					if iv, err := strconv.ParseInt(v, 10, 64); err == nil {
 						field.SetInt(iv)
 					}
+				} else if v, ok := mapValue.(time.Time); ok {
+					ms := v.UTC().UnixMilli()
+					field.SetInt(ms)
 				}
 			case reflect.String:
 				// Handle string types

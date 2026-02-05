@@ -1,0 +1,406 @@
+# yaaf-common-bigquery
+
+## Overview
+
+yaaf-common-bigquery is a Google BigQuery adapter for the go-yaaf/yaaf-common database interface. It provides a fluent API for querying, bulk operations, and schema management on BigQuery. This library is designed for analytics workloads, not traditional CRUD operations.
+
+Repository: https://github.com/go-yaaf/yaaf-common-bigquery
+Version: 1.2+
+Go Version: 1.24.0+
+
+## Key Dependencies
+
+- cloud.google.com/go/bigquery v1.73.0 - BigQuery client
+- github.com/go-yaaf/yaaf-common v1.2.182 - Core database interfaces
+- google.golang.org/api v0.259.0 - Google API client
+
+## Installation
+
+```bash
+go get github.com/go-yaaf/yaaf-common-bigquery
+```
+
+## Core Concepts
+
+### 1. Database Connection
+
+The library uses a URI-based connection format:
+- Format: `bq://projectId:datasetName`
+- Example: `bq://my-gcp-project:analytics_dataset`
+
+### 2. Entity-Based Operations
+
+All operations work with entities implementing the `entity.Entity` interface from yaaf-common.
+Entities must have a `TABLE()` method that returns the BigQuery table name.
+
+### 3. Storage Write API
+
+BulkInsert uses BigQuery's Storage Write API with:
+- Managed streams (cached per table)
+- Proto-based message serialization
+- Automatic retry logic with exponential backoff
+- Configurable batch sizes via config.BigQueryBatchSize()
+
+## Architecture
+
+### Main Components
+
+1. **BqDatabase** (`bqdb/bq_database.go`)
+   - Main database client struct
+   - Manages BigQuery client and Storage Write API client
+   - Handles connection lifecycle and stream caching
+
+2. **bqDatabaseQuery** (`bqdb/bq_database_query.go`)
+   - Query builder with fluent API
+   - Supports filters, aggregations, grouping, sorting, pagination
+   - Generates optimized BigQuery SQL
+
+3. **Analytics Support** (`bqdb/bq_database_query_analytics.go`)
+   - Advanced aggregation functions
+   - Group-by operations with time period bucketing
+   - Count, Sum, Avg, Max, Min operations
+
+## Common Usage Patterns
+
+### 1. Creating a Database Connection
+
+```go
+import (
+    "github.com/go-yaaf/yaaf-common-bigquery/bqdb"
+    "github.com/go-yaaf/yaaf-common/database"
+)
+
+func main() {
+    uri := "bq://your-project-id:your-dataset-id"
+    db, err := bqdb.NewBqDatabase(uri)
+    if err != nil {
+        log.Fatalf("Failed to connect: %v", err)
+    }
+    defer db.Close()
+}
+```
+
+### 2. Basic Query with Filters
+
+```go
+// Simple equality filter
+results, total, err := db.Query(NewEntityFactory()).
+    Filter(database.F("field_name").Eq("value")).
+    Limit(100).
+    Page(0).
+    Find()
+
+// Multiple filters (AND logic)
+results, total, err := db.Query(NewEntityFactory()).
+    Filter(database.F("status").Eq("active")).
+    Filter(database.F("category").In("A", "B", "C")).
+    Filter(database.F("count").Gt(10)).
+    Find()
+```
+
+### 3. Advanced Filtering
+
+Available filter operators:
+- `Eq(value)` - Equals
+- `Ne(value)` - Not equals
+- `Gt(value)` - Greater than
+- `Gte(value)` - Greater than or equal
+- `Lt(value)` - Less than
+- `Lte(value)` - Less than or equal
+- `Like(pattern)` - Pattern matching (use % for wildcards)
+- `In(values...)` - Value in list
+- `NotIn(values...)` - Value not in list
+
+```go
+// Complex query with multiple filters
+results, total, err := db.Query(NewEntityFactory()).
+    Filter(database.F("src_ip").Like("10.245.%")).
+    Filter(database.F("dst_ip").NotIn("1.1.1.1", "8.8.8.8")).
+    Filter(database.F("protocol").In("TCP", "UDP")).
+    Range("timestamp", fromTime, toTime).
+    Sort("bytes", "DESC").
+    Limit(1000).
+    Page(0).
+    Find()
+```
+
+### 4. Time Range Queries
+
+```go
+// Filter by time range on a timestamp field
+results, total, err := db.Query(NewEntityFactory()).
+    Range("created_at", startTimestamp, endTimestamp).
+    Find()
+```
+
+### 5. Aggregations
+
+```go
+// Count records
+count, err := db.Query(NewEntityFactory()).
+    Filter(database.F("status").Eq("active")).
+    Count()
+
+// Sum aggregation
+totalBytes, err := db.Query(NewEntityFactory()).
+    Filter(database.F("type").Eq("download")).
+    Aggregation("bytes", "sum")
+
+// Average
+avgValue, err := db.Query(NewEntityFactory()).
+    Aggregation("value", "avg")
+
+// Max/Min
+maxValue, err := db.Query(NewEntityFactory()).
+    Aggregation("value", "max")
+```
+
+### 6. Group-By Queries
+
+```go
+// Group by and count
+results, total, err := db.Query(NewEntityFactory()).
+    Filter(database.F("active").Eq(true)).
+    GroupCount("category")
+
+// Group by and aggregate
+results, total, err := db.Query(NewEntityFactory()).
+    GroupAggregation("bytes", "sum", "user_id")
+
+// Multiple group-by fields
+results, total, err := db.Query(NewEntityFactory()).
+    GroupAggregation("amount", "avg", "region", "category")
+```
+
+### 7. Bulk Insert
+
+```go
+// Insert large batch of entities
+entities := []entity.Entity{...}
+insertedCount, err := db.BulkInsert(entities)
+if err != nil {
+    log.Fatalf("Bulk insert failed: %v", err)
+}
+log.Printf("Inserted %d records", insertedCount)
+```
+
+Important BulkInsert notes:
+- Uses Storage Write API (proto-based, not JSON)
+- Automatically batched by config.BigQueryBatchSize()
+- Default timeout: config.CfgBigQueryBatchTimeoutSec()
+- Supports automatic retries with exponential backoff
+- Streams are cached per table for performance
+
+### 8. Raw SQL Execution
+
+```go
+// DML (DELETE, UPDATE, INSERT)
+sql := "DELETE FROM {table_name} WHERE status = @status"
+affectedRows, err := db.ExecuteSQL(sql, "my_table", "inactive")
+
+// SELECT queries
+sql := "SELECT field1, COUNT(*) as cnt FROM {table_name} GROUP BY field1"
+results, err := db.ExecuteQuery("", sql, "my_table")
+```
+
+Note: `{table_name}` is automatically replaced with fully qualified name.
+
+### 9. DDL Operations
+
+```go
+// Create table and materialized views
+ddl := map[string][]string{
+    "shardKey": {"shard-001"},
+    "name":     {"base_table", "materialized_view_1"},
+    "sql": {
+        createTableSQL,
+        createMViewSQL,
+    },
+}
+err := db.ExecuteDDL(ddl)
+```
+
+DDL notes:
+- Physical names formed as "name-shardKey"
+- Table SQL expects 1 %s (table FQN)
+- MV SQL expects 2 %s (MV FQN, base table FQN)
+- Use "IF NOT EXISTS" for idempotency
+
+## Method Reference
+
+### BqDatabase Methods
+
+#### Connection Management
+- `NewBqDatabase(uri string) (*BqDatabase, error)` - Create new connection
+- `Close() error` - Close connection and release resources
+- `CloneDatabase() (database.IDatabase, error)` - Clone database instance
+- `Ping(retries uint, intervalInSeconds uint) error` - Test connectivity (no-op)
+
+#### Query Building
+- `Query(factory entity.EntityFactory) database.IQuery` - Start query builder
+- `AdvancedQuery(factory entity.EntityFactory) database.IAdvancedQuery` - Advanced query builder
+
+#### Bulk Operations
+- `BulkInsert(entities []entity.Entity) (int64, error)` - Insert multiple records
+
+#### SQL Execution
+- `ExecuteSQL(sql string, args ...any) (int64, error)` - Execute DML
+- `ExecuteQuery(source, sql string, args ...any) ([]entity.Json, error)` - Execute SELECT
+- `ExecuteDDL(ddl map[string][]string) error` - Execute DDL
+
+### Query Builder Methods
+
+#### Filtering
+- `Filter(filter database.QueryFilter) database.IQuery` - Add single filter
+- `MatchAll(filters ...database.QueryFilter) database.IQuery` - AND filters
+- `MatchAny(filters ...database.QueryFilter) database.IQuery` - OR filters
+- `Range(field string, from, to entity.Timestamp) database.IQuery` - Time range
+
+#### Sorting & Pagination
+- `Sort(field string, order string) database.IQuery` - Sort by field (ASC/DESC)
+- `Limit(limit int) database.IQuery` - Set page size
+- `Page(page int) database.IQuery` - Set page number (0-indexed)
+
+#### Aggregations
+- `Count() (int64, error)` - Count matching records
+- `Aggregation(field, function string) (float64, error)` - Aggregate (sum/avg/max/min)
+- `GroupCount(groupBy ...string) ([]entity.Entity, int64, error)` - Group and count
+- `GroupAggregation(field, function string, groupBy ...string) ([]entity.Entity, int64, error)` - Group and aggregate
+
+#### Execution
+- `Find() ([]entity.Entity, int64, error)` - Execute query and return results
+- `Apply(cb func(entity.Entity) entity.Entity) database.IQuery` - Transform results
+
+## Unsupported Operations
+
+The following operations are NOT supported (BigQuery is analytics-focused, not CRUD):
+
+- `Get(entityID)` - Single record retrieval by ID
+- `List(entityIDs)` - Multiple records by IDs
+- `Exists(entityID)` - Check if record exists
+- `Insert(entity)` - Single insert (use BulkInsert)
+- `Update(entity)` - Update operations
+- `Upsert(entity)` - Upsert operations
+- `Delete(entityID)` - Delete by ID (use ExecuteSQL)
+- `BulkUpdate()` - Bulk updates
+- `BulkUpsert()` - Bulk upserts
+- `BulkDelete()` - Bulk deletes by IDs
+- `SetField()` / `SetFields()` - Field updates
+- `PurgeTable()` - Table purge
+
+## Best Practices
+
+### 1. Query Optimization
+- Use filters to reduce data scanned
+- Leverage partitioned fields in Range() queries
+- Use Limit() to control result size
+- Consider materialized views for common aggregations
+
+### 2. Bulk Insert Performance
+- Batch size controlled by config.BigQueryBatchSize()
+- Default: optimized for throughput vs latency
+- Streams are cached - reuse same table for best performance
+- Monitor timeout with config.CfgBigQueryBatchTimeoutSec()
+
+### 3. Error Handling
+- Storage Write API errors include row-level details
+- Check decodeAppendError() for detailed error info
+- Implement retries for transient errors
+- Use context timeouts for long-running queries
+
+### 4. Schema Management
+- Define entities with proper BigQuery-compatible types
+- Use struct tags for field mapping
+- Test DDL templates with IF NOT EXISTS
+- Consider partitioning and clustering in table schemas
+
+### 5. Cost Management
+- BigQuery charges by data scanned
+- Use filters to reduce scan size
+- Partition large tables by timestamp
+- Cache query results when appropriate
+
+## Configuration
+
+The library uses yaaf-common config for settings:
+
+- `config.BigQueryBatchSize()` - Bulk insert batch size
+- `config.CfgBigQueryBatchTimeoutSec()` - Bulk operation timeout
+
+## Common Pitfalls
+
+1. **CRUD Expectations**: This is NOT a CRUD database. Use BulkInsert, not Insert/Update/Delete.
+
+2. **Table Names**: Use entity.TABLE() for table names. Physical names are auto-prefixed with project.dataset.
+
+3. **Placeholder Syntax**: Use `{table_name}` in SQL, not manual concatenation.
+
+4. **Stream Caching**: Streams are cached per table. Don't create multiple BqDatabase instances unnecessarily.
+
+5. **Timestamp Fields**: Use entity.Timestamp type for time-based queries with Range().
+
+6. **Filter Types**: Ensure filter values match field types (strings, ints, etc).
+
+7. **Context Timeouts**: Long queries may timeout. Adjust context deadlines as needed.
+
+## File Structure
+
+```
+bqdb/
+├── bq_database.go                    # Main database client
+├── bq_database_query.go              # Query builder implementation
+├── bq_database_query_helper.go       # Query helper functions
+└── bq_database_query_analytics.go    # Analytics and aggregation functions
+
+test/
+├── bq_db_test.go                     # Basic database tests
+├── bq_db_bulk_insert_test.go         # Bulk insert tests
+├── bq_ddl_test.go                    # DDL operation tests
+└── ...                               # Additional test files
+```
+
+## Testing
+
+Tests require:
+- BigQuery project and dataset
+- Google Cloud credentials
+- Tests skip in CI by default
+
+Run tests:
+```bash
+go test ./...
+```
+
+## Examples from Codebase
+
+### Entity Factory Pattern
+```go
+func NewFlowRecordEntity(streamID string) entity.EntityFactory {
+    return func() entity.Entity {
+        return &FlowRecord{StreamID: streamID}
+    }
+}
+```
+
+### Query with Callbacks
+```go
+results, _, err := db.Query(factory).
+    Filter(database.F("active").Eq(true)).
+    Apply(func(e entity.Entity) entity.Entity {
+        // Transform entity
+        return e
+    }).
+    Find()
+```
+
+## Related Documentation
+
+- yaaf-common: https://github.com/go-yaaf/yaaf-common
+- BigQuery Client Docs: https://pkg.go.dev/cloud.google.com/go/bigquery
+- BigQuery Storage Write API: https://cloud.google.com/bigquery/docs/write-api
+
+## Support
+
+- Issues: https://github.com/go-yaaf/yaaf-common-bigquery/issues
+- Go Report Card: https://goreportcard.com/report/github.com/go-yaaf/yaaf-common-bigquery
+- GoDoc: https://pkg.go.dev/github.com/go-yaaf/yaaf-common-bigquery
